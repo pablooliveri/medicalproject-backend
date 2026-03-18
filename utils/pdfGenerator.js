@@ -346,8 +346,8 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
       doc.moveTo(colSnack, rowY).lineTo(colSnack, rowY + currentRowHeight).stroke();
       doc.moveTo(colDinner, rowY).lineTo(colDinner, rowY + currentRowHeight).stroke();
 
-      // Medication name + dosage combined (ACHIRAS style)
-      const medName = `${med.medicationName} ${med.dosage}`;
+      // Medication name only (ACHIRAS style)
+      const medName = med.medicationName;
       doc.font('Helvetica').fontSize(9);
 
       if (isInactive) {
@@ -548,7 +548,7 @@ const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
         doc.moveTo(colSnack, rowY).lineTo(colSnack, rowY + currentRowHeight).stroke();
         doc.moveTo(colDinner, rowY).lineTo(colDinner, rowY + currentRowHeight).stroke();
 
-        const medName = `${med.medicationName} ${med.dosage}`;
+        const medName = med.medicationName;
         doc.font('Helvetica').fontSize(9);
 
         if (isInactive) {
