@@ -16,7 +16,7 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://loquacious-eclair-63d34d.netlify.app'
+    'https://medicalsite-pablo.netlify.app'
   ],
   credentials: true
 }));
