@@ -32,7 +32,7 @@ const settingsSchema = new mongoose.Schema({
   },
   branches: {
     type: [String],
-    default: ['Casa 1', 'Casa 2', 'Casa 3']
+    default: []
   }
 }, {
   timestamps: true

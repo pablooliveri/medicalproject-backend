@@ -127,7 +127,7 @@ const generateAllResidentsReport = async (req, res) => {
     const residents = await Resident.find(residentFilter).sort({ lastName: 1, firstName: 1 });
 
     if (residents.length === 0) {
-      return res.status(404).json({ message: 'No residents found' });
+      return res.status(404).json({ message: `No active residents found${sucursal ? ` for branch "${sucursal}"` : ''}` });
     }
 
     // Build data for each resident

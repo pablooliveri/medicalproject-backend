@@ -12,14 +12,7 @@ const getResidents = async (req, res) => {
     }
 
     if (sucursal) {
-      if (sucursal === 'Casa 1') {
-        // Also match residents with no sucursal (default is Casa 1)
-        query.$and = [
-          { $or: [{ sucursal: 'Casa 1' }, { sucursal: null }, { sucursal: { $exists: false } }] }
-        ];
-      } else {
-        query.sucursal = sucursal;
-      }
+      query.sucursal = sucursal;
     }
 
     if (search) {

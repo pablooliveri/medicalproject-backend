@@ -27,7 +27,7 @@ const residentSchema = new mongoose.Schema({
   },
   sucursal: {
     type: String,
-    default: 'Casa 1'
+    default: ''
   },
   notes: {
     type: String,
