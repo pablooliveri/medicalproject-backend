@@ -1,7 +1,7 @@
 const Delivery = require('../models/Delivery');
 const Resident = require('../models/Resident');
 const ResidentMedication = require('../models/ResidentMedication');
-const { generateDeliveryPDF, generateResidentReportPDF, getFormLabel } = require('../utils/pdfGenerator');
+const { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, getFormLabel } = require('../utils/pdfGenerator');
 const { calculateCoverageDate } = require('../utils/stockCalculator');
 
 // GET /api/reports/delivery/:id
@@ -110,4 +110,72 @@ const generateResidentReport = async (req, res) => {
   }
 };
 
-module.exports = { generateDeliveryReport, generateResidentReport };
+// GET /api/reports/all-residents?month=3&year=2026&sucursal=Casa+1
+const generateAllResidentsReport = async (req, res) => {
+  try {
+    const now = new Date();
+    const month = req.query.month ? parseInt(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? parseInt(req.query.year) : now.getFullYear();
+    const sucursal = req.query.sucursal || null;
+
+    const startOfMonth = new Date(year, month - 1, 1);
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // Find residents, optionally filtered by branch
+    const residentFilter = { isActive: true };
+    if (sucursal) residentFilter.sucursal = sucursal;
+    const residents = await Resident.find(residentFilter).sort({ lastName: 1, firstName: 1 });
+
+    if (residents.length === 0) {
+      return res.status(404).json({ message: 'No residents found' });
+    }
+
+    // Build data for each resident
+    const residentsData = [];
+    for (const resident of residents) {
+      const resMeds = await ResidentMedication.find({
+        resident: resident._id,
+        startDate: { $lte: endOfMonth },
+        $or: [
+          { isActive: true },
+          { endDate: { $gte: startOfMonth } }
+        ]
+      }).populate('medication');
+
+      const medications = resMeds.map(med => {
+        const wasInactive = !med.isActive && med.endDate && new Date(med.endDate) <= endOfMonth;
+        return {
+          medicationName: med.medication.genericName.toUpperCase() +
+            (med.medication.commercialName ? ` (${med.medication.commercialName})` : ''),
+          dosage: `${med.dosageMg} ${med.medication.dosageUnit}`,
+          breakfast: med.schedule.breakfast || 0,
+          lunch: med.schedule.lunch || 0,
+          snack: med.schedule.snack || 0,
+          dinner: med.schedule.dinner || 0,
+          formLabel: getFormLabel(med.medication),
+          stock: med.currentStock,
+          isActive: med.isActive,
+          endDate: med.endDate,
+          wasInactive
+        };
+      });
+
+      medications.sort((a, b) => a.medicationName.localeCompare(b.medicationName, 'es'));
+      residentsData.push({ resident, medications });
+    }
+
+    const pdfBuffer = await generateAllResidentsReportPDF(residentsData, { month, year });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename=all-residents-report-${month}-${year}.pdf`,
+      'Content-Length': pdfBuffer.length
+    });
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { generateDeliveryReport, generateResidentReport, generateAllResidentsReport };

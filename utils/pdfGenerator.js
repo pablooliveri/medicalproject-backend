@@ -437,4 +437,179 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
   });
 };
 
-module.exports = { generateDeliveryPDF, generateResidentReportPDF, getFormLabel, FORM_LABELS_ES };
+const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
+  const settings = await Settings.findOne();
+
+  const month = options.month || (new Date().getMonth() + 1);
+  const year = options.year || new Date().getFullYear();
+  const monthYear = `${MONTH_NAMES_ES[month - 1]}-${String(year).slice(-2)}`;
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks = [];
+
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const logoPath = settings && settings.logo
+      ? path.join(__dirname, '..', settings.logo)
+      : null;
+    const logoExists = logoPath && fs.existsSync(logoPath);
+
+    residentsData.forEach((entry, index) => {
+      const { resident, medications } = entry;
+      const activeMeds = medications.filter(m => !m.wasInactive);
+      const inactiveMeds = medications.filter(m => m.wasInactive);
+
+      if (index > 0) doc.addPage();
+
+      // Header
+      let headerY = 50;
+
+      if (logoExists) {
+        doc.image(logoPath, 50, headerY, { width: 80 });
+        doc.fontSize(18).font('Helvetica-Bold')
+          .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
+        headerY += 90;
+      } else {
+        doc.fontSize(18).font('Helvetica-Bold')
+          .text(settings?.companyName || 'Casa de Salud Residencial', 50, headerY);
+        headerY += 40;
+      }
+
+      doc.moveTo(50, headerY).lineTo(545, headerY).stroke();
+      headerY += 20;
+
+      // Title
+      doc.fontSize(16).font('Helvetica-Bold')
+        .text('MEDICACIÓN', 50, headerY, { align: 'center', underline: true });
+      headerY += 35;
+
+      // Resident info
+      doc.fontSize(10).font('Helvetica-Bold').text('Residente:', 50, headerY);
+      doc.font('Helvetica').text(`${resident.firstName} ${resident.lastName}`, 120, headerY);
+      doc.font('Helvetica-Bold').text('FECHA:', 400, headerY);
+      doc.font('Helvetica').text(monthYear, 460, headerY);
+      headerY += 18;
+
+      doc.font('Helvetica-Bold').text('CI:', 50, headerY);
+      doc.font('Helvetica').text(resident.cedula, 120, headerY);
+      if (resident.sucursal) {
+        doc.font('Helvetica-Bold').text('Sucursal:', 400, headerY);
+        doc.font('Helvetica').text(resident.sucursal, 460, headerY);
+      }
+      headerY += 25;
+
+      // Table columns
+      const colMed = 50;
+      const colBreak = 230;
+      const colLunch = 310;
+      const colSnack = 390;
+      const colDinner = 470;
+      const tableRight = 545;
+      const tableHeaderY = headerY;
+      const headerHeight = 22;
+
+      // Table header
+      doc.rect(colMed, tableHeaderY, tableRight - colMed, headerHeight).stroke();
+      doc.moveTo(colBreak, tableHeaderY).lineTo(colBreak, tableHeaderY + headerHeight).stroke();
+      doc.moveTo(colLunch, tableHeaderY).lineTo(colLunch, tableHeaderY + headerHeight).stroke();
+      doc.moveTo(colSnack, tableHeaderY).lineTo(colSnack, tableHeaderY + headerHeight).stroke();
+      doc.moveTo(colDinner, tableHeaderY).lineTo(colDinner, tableHeaderY + headerHeight).stroke();
+
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000');
+      drawCellText(doc, 'Medicación', colMed, tableHeaderY, colBreak - colMed, headerHeight);
+      drawCellText(doc, 'Desayuno', colBreak, tableHeaderY, colLunch - colBreak, headerHeight, { align: 'center' });
+      drawCellText(doc, 'Almuerzo', colLunch, tableHeaderY, colSnack - colLunch, headerHeight, { align: 'center' });
+      drawCellText(doc, 'Merienda', colSnack, tableHeaderY, colDinner - colSnack, headerHeight, { align: 'center' });
+      drawCellText(doc, 'Cena', colDinner, tableHeaderY, tableRight - colDinner, headerHeight, { align: 'center' });
+
+      let rowY = tableHeaderY + headerHeight;
+      const rowHeight = 22;
+      const inactiveRowHeight = 30;
+
+      const drawMedRow = (med, isInactive) => {
+        const currentRowHeight = isInactive ? inactiveRowHeight : rowHeight;
+
+        if (rowY > 720) {
+          doc.addPage();
+          rowY = 50;
+        }
+
+        if (isInactive) {
+          doc.rect(colMed, rowY, tableRight - colMed, currentRowHeight).fill('#f5f5f5');
+        }
+
+        doc.fillColor(isInactive ? '#999999' : '#000000');
+        doc.rect(colMed, rowY, tableRight - colMed, currentRowHeight).stroke();
+        doc.moveTo(colBreak, rowY).lineTo(colBreak, rowY + currentRowHeight).stroke();
+        doc.moveTo(colLunch, rowY).lineTo(colLunch, rowY + currentRowHeight).stroke();
+        doc.moveTo(colSnack, rowY).lineTo(colSnack, rowY + currentRowHeight).stroke();
+        doc.moveTo(colDinner, rowY).lineTo(colDinner, rowY + currentRowHeight).stroke();
+
+        const medName = `${med.medicationName} ${med.dosage}`;
+        doc.font('Helvetica').fontSize(9);
+
+        if (isInactive) {
+          const nameY = rowY + 3;
+          doc.text(medName, colMed + 5, nameY, { width: colBreak - colMed - 10, strike: true });
+          if (med.endDate) {
+            const endDate = new Date(med.endDate);
+            const endMonthLabel = `Baja: ${MONTH_NAMES_ES[endDate.getMonth()]}-${String(endDate.getFullYear()).slice(-2)}`;
+            doc.fontSize(7).font('Helvetica-Oblique').fillColor('#cc0000');
+            doc.text(endMonthLabel, colMed + 5, rowY + 17, { width: colBreak - colMed - 10 });
+            doc.fillColor('#999999');
+          }
+          const formLabel = med.formLabel || 'COMP';
+          doc.font('Helvetica').fontSize(9);
+          if (med.breakfast > 0) drawCellText(doc, `${med.breakfast} ${formLabel}`, colBreak, rowY, colLunch - colBreak, currentRowHeight, { align: 'center', strike: true });
+          if (med.lunch > 0) drawCellText(doc, `${med.lunch} ${formLabel}`, colLunch, rowY, colSnack - colLunch, currentRowHeight, { align: 'center', strike: true });
+          if (med.snack > 0) drawCellText(doc, `${med.snack} ${formLabel}`, colSnack, rowY, colDinner - colSnack, currentRowHeight, { align: 'center', strike: true });
+          if (med.dinner > 0) {
+            const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
+            drawCellText(doc, dinnerText, colDinner, rowY, tableRight - colDinner, currentRowHeight, { align: 'center', strike: true });
+          }
+        } else {
+          drawCellText(doc, medName, colMed, rowY, colBreak - colMed, currentRowHeight);
+          const formLabel = med.formLabel || 'COMP';
+          if (med.breakfast > 0) drawCellText(doc, `${med.breakfast} ${formLabel}`, colBreak, rowY, colLunch - colBreak, currentRowHeight, { align: 'center' });
+          if (med.lunch > 0) drawCellText(doc, `${med.lunch} ${formLabel}`, colLunch, rowY, colSnack - colLunch, currentRowHeight, { align: 'center' });
+          if (med.snack > 0) drawCellText(doc, `${med.snack} ${formLabel}`, colSnack, rowY, colDinner - colSnack, currentRowHeight, { align: 'center' });
+          if (med.dinner > 0) {
+            const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
+            drawCellText(doc, dinnerText, colDinner, rowY, tableRight - colDinner, currentRowHeight, { align: 'center' });
+          }
+        }
+
+        rowY += currentRowHeight;
+      };
+
+      for (const med of activeMeds) drawMedRow(med, false);
+
+      if (inactiveMeds.length > 0) {
+        if (rowY > 700) { doc.addPage(); rowY = 50; }
+        rowY += 4;
+        doc.fontSize(7).font('Helvetica-Bold').fillColor('#999999');
+        doc.text('MEDICAMENTOS INACTIVOS', colMed, rowY, { width: tableRight - colMed, align: 'center' });
+        rowY += 12;
+        doc.fillColor('#000000');
+        for (const med of inactiveMeds) drawMedRow(med, true);
+      }
+
+      doc.fillColor('#000000');
+    });
+
+    // Footer on all pages
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(8).font('Helvetica')
+        .text(`Generado el ${new Date().toLocaleString('es-UY')}`, 50, 760, { align: 'center', width: 495 });
+    }
+
+    doc.end();
+  });
+};
+
+module.exports = { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, getFormLabel, FORM_LABELS_ES };
