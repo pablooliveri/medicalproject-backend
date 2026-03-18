@@ -29,6 +29,10 @@ const settingsSchema = new mongoose.Schema({
   email: {
     type: String,
     default: ''
+  },
+  branches: {
+    type: [String],
+    default: ['Casa 1', 'Casa 2', 'Casa 3']
   }
 }, {
   timestamps: true

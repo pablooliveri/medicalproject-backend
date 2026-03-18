@@ -4,7 +4,10 @@ const {
   getSettings,
   updateSettings,
   uploadLogo,
-  removeLogo
+  removeLogo,
+  addBranch,
+  updateBranch,
+  deleteBranch
 } = require('../controllers/settingsController');
 const { protect } = require('../middleware/auth');
 const { uploadLogo: uploadLogoMiddleware } = require('../middleware/upload');
@@ -21,5 +24,8 @@ router.post('/logo', (req, res, next) => {
   });
 }, uploadLogo);
 router.delete('/logo', removeLogo);
+router.post('/branches', addBranch);
+router.put('/branches', updateBranch);
+router.delete('/branches/:name', deleteBranch);
 
 module.exports = router;

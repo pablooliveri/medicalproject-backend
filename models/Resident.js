@@ -27,7 +27,6 @@ const residentSchema = new mongoose.Schema({
   },
   sucursal: {
     type: String,
-    enum: ['Casa 1', 'Casa 2', 'Casa 3'],
     default: 'Casa 1'
   },
   notes: {

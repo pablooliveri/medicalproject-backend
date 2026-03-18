@@ -30,6 +30,7 @@ const updateSettings = async (req, res) => {
     if (address !== undefined) settings.address = address;
     if (phone !== undefined) settings.phone = phone;
     if (email !== undefined) settings.email = email;
+    if (req.body.branches !== undefined) settings.branches = req.body.branches;
 
     await settings.save();
     res.json(settings);
@@ -89,4 +90,82 @@ const removeLogo = async (req, res) => {
   }
 };
 
-module.exports = { getSettings, updateSettings, uploadLogo, removeLogo };
+// POST /api/settings/branches - Add a branch
+const addBranch = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: 'Branch name is required' });
+    }
+    let settings = await Settings.findOne();
+    if (!settings) settings = await Settings.create({});
+
+    if (settings.branches.includes(name.trim())) {
+      return res.status(400).json({ message: 'Branch already exists' });
+    }
+    settings.branches.push(name.trim());
+    await settings.save();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// PUT /api/settings/branches - Rename a branch
+const updateBranch = async (req, res) => {
+  try {
+    const { oldName, newName } = req.body;
+    if (!oldName || !newName || !newName.trim()) {
+      return res.status(400).json({ message: 'Old name and new name are required' });
+    }
+    let settings = await Settings.findOne();
+    if (!settings) return res.status(404).json({ message: 'Settings not found' });
+
+    const idx = settings.branches.indexOf(oldName);
+    if (idx === -1) {
+      return res.status(404).json({ message: 'Branch not found' });
+    }
+    if (oldName !== newName.trim() && settings.branches.includes(newName.trim())) {
+      return res.status(400).json({ message: 'Branch name already exists' });
+    }
+    settings.branches[idx] = newName.trim();
+    await settings.save();
+
+    // Update all residents with the old branch name
+    const Resident = require('../models/Resident');
+    await Resident.updateMany({ sucursal: oldName }, { sucursal: newName.trim() });
+
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/settings/branches/:name - Delete a branch
+const deleteBranch = async (req, res) => {
+  try {
+    const { name } = req.params;
+    let settings = await Settings.findOne();
+    if (!settings) return res.status(404).json({ message: 'Settings not found' });
+
+    const idx = settings.branches.indexOf(name);
+    if (idx === -1) {
+      return res.status(404).json({ message: 'Branch not found' });
+    }
+
+    // Check if any residents are assigned to this branch
+    const Resident = require('../models/Resident');
+    const count = await Resident.countDocuments({ sucursal: name });
+    if (count > 0) {
+      return res.status(400).json({ message: `Cannot delete: ${count} resident(s) assigned to this branch` });
+    }
+
+    settings.branches.splice(idx, 1);
+    await settings.save();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { getSettings, updateSettings, uploadLogo, removeLogo, addBranch, updateBranch, deleteBranch };
