@@ -190,8 +190,17 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
   });
 };
 
-const generateResidentReportPDF = async (resident, medications) => {
+const generateResidentReportPDF = async (resident, medications, options = {}) => {
   const settings = await Settings.findOne();
+
+  // Use provided month/year or default to current
+  const month = options.month || (new Date().getMonth() + 1);
+  const year = options.year || new Date().getFullYear();
+  const monthYear = `${MONTH_NAMES_ES[month - 1]}-${String(year).slice(-2)}`;
+
+  // Separate active and inactive medications
+  const activeMeds = medications.filter(m => !m.wasInactive);
+  const inactiveMeds = medications.filter(m => m.wasInactive);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
@@ -228,9 +237,6 @@ const generateResidentReportPDF = async (resident, medications) => {
     headerY += 35;
 
     // Resident info left side + Date right side
-    const now = new Date();
-    const monthYear = `${MONTH_NAMES_ES[now.getMonth()]}-${String(now.getFullYear()).slice(-2)}`;
-
     doc.fontSize(10).font('Helvetica-Bold').text('Residente:', 50, headerY);
     doc.font('Helvetica').text(`${resident.firstName} ${resident.lastName}`, 120, headerY);
 
@@ -271,7 +277,7 @@ const generateResidentReportPDF = async (resident, medications) => {
     doc.moveTo(colDinner, tableHeaderY).lineTo(colDinner, tableHeaderY + headerHeight).stroke();
 
     // Header text
-    doc.fontSize(9).font('Helvetica-Bold');
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000');
     doc.text('Medicación', colMed + 5, tableHeaderY + 5, { width: colBreak - colMed - 10 });
     doc.text('Desayuno', colBreak + 5, tableHeaderY + 5, { width: colLunch - colBreak - 10, align: 'center' });
     doc.text('Almuerzo', colLunch + 5, tableHeaderY + 5, { width: colSnack - colLunch - 10, align: 'center' });
@@ -280,44 +286,97 @@ const generateResidentReportPDF = async (resident, medications) => {
 
     let rowY = tableHeaderY + headerHeight;
     const rowHeight = 18;
-    doc.font('Helvetica').fontSize(9);
+    const inactiveRowHeight = 28; // Taller rows for inactive meds to fit the "Baja" label
 
-    for (const med of medications) {
+    // Helper to draw a medication row
+    const drawMedRow = (med, isInactive) => {
+      const currentRowHeight = isInactive ? inactiveRowHeight : rowHeight;
+
       if (rowY > 720) {
         doc.addPage();
         rowY = 50;
       }
 
+      // Light gray background for inactive medications
+      if (isInactive) {
+        doc.rect(colMed, rowY, tableRight - colMed, currentRowHeight).fill('#f5f5f5');
+      }
+
       // Draw row borders
-      doc.rect(colMed, rowY, tableRight - colMed, rowHeight).stroke();
-      doc.moveTo(colBreak, rowY).lineTo(colBreak, rowY + rowHeight).stroke();
-      doc.moveTo(colLunch, rowY).lineTo(colLunch, rowY + rowHeight).stroke();
-      doc.moveTo(colSnack, rowY).lineTo(colSnack, rowY + rowHeight).stroke();
-      doc.moveTo(colDinner, rowY).lineTo(colDinner, rowY + rowHeight).stroke();
+      doc.fillColor(isInactive ? '#999999' : '#000000');
+      doc.rect(colMed, rowY, tableRight - colMed, currentRowHeight).stroke();
+      doc.moveTo(colBreak, rowY).lineTo(colBreak, rowY + currentRowHeight).stroke();
+      doc.moveTo(colLunch, rowY).lineTo(colLunch, rowY + currentRowHeight).stroke();
+      doc.moveTo(colSnack, rowY).lineTo(colSnack, rowY + currentRowHeight).stroke();
+      doc.moveTo(colDinner, rowY).lineTo(colDinner, rowY + currentRowHeight).stroke();
 
       // Medication name + dosage combined (ACHIRAS style)
       const medName = `${med.medicationName} ${med.dosage}`;
-      doc.text(medName, colMed + 5, rowY + 4, { width: colBreak - colMed - 10 });
+      doc.font('Helvetica').fontSize(9);
+
+      if (isInactive) {
+        // Strikethrough for inactive medication name
+        doc.text(medName, colMed + 5, rowY + 3, { width: colBreak - colMed - 10, strike: true });
+
+        // Show deactivation month below the name
+        if (med.endDate) {
+          const endDate = new Date(med.endDate);
+          const endMonthLabel = `Baja: ${MONTH_NAMES_ES[endDate.getMonth()]}-${String(endDate.getFullYear()).slice(-2)}`;
+          doc.fontSize(7).font('Helvetica-Oblique').fillColor('#cc0000');
+          doc.text(endMonthLabel, colMed + 5, rowY + 15, { width: colBreak - colMed - 10 });
+          doc.fillColor('#999999');
+        }
+      } else {
+        doc.text(medName, colMed + 5, rowY + 4, { width: colBreak - colMed - 10 });
+      }
 
       // Schedule values - show "X COMP" format or blank for 0
       const formLabel = med.formLabel || 'COMP';
+      const textY = rowY + (isInactive ? 3 : 4);
+      doc.font('Helvetica').fontSize(9);
 
       if (med.breakfast > 0) {
-        doc.text(`${med.breakfast} ${formLabel}`, colBreak + 5, rowY + 4, { width: colLunch - colBreak - 10, align: 'center' });
+        doc.text(`${med.breakfast} ${formLabel}`, colBreak + 5, textY, { width: colLunch - colBreak - 10, align: 'center', strike: isInactive });
       }
       if (med.lunch > 0) {
-        doc.text(`${med.lunch} ${formLabel}`, colLunch + 5, rowY + 4, { width: colSnack - colLunch - 10, align: 'center' });
+        doc.text(`${med.lunch} ${formLabel}`, colLunch + 5, textY, { width: colSnack - colLunch - 10, align: 'center', strike: isInactive });
       }
       if (med.snack > 0) {
-        doc.text(`${med.snack} ${formLabel}`, colSnack + 5, rowY + 4, { width: colDinner - colSnack - 10, align: 'center' });
+        doc.text(`${med.snack} ${formLabel}`, colSnack + 5, textY, { width: colDinner - colSnack - 10, align: 'center', strike: isInactive });
       }
       if (med.dinner > 0) {
         const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
-        doc.text(dinnerText, colDinner + 5, rowY + 4, { width: tableRight - colDinner - 10, align: 'center' });
+        doc.text(dinnerText, colDinner + 5, textY, { width: tableRight - colDinner - 10, align: 'center', strike: isInactive });
       }
 
-      rowY += rowHeight;
+      rowY += currentRowHeight;
+    };
+
+    // Draw active medications first
+    for (const med of activeMeds) {
+      drawMedRow(med, false);
     }
+
+    // Draw inactive medications (visually distinguished)
+    if (inactiveMeds.length > 0) {
+      // Add a small separator label if there are inactive meds
+      if (rowY > 700) {
+        doc.addPage();
+        rowY = 50;
+      }
+      rowY += 4;
+      doc.fontSize(7).font('Helvetica-Bold').fillColor('#999999');
+      doc.text('MEDICAMENTOS INACTIVOS', colMed, rowY, { width: tableRight - colMed, align: 'center' });
+      rowY += 12;
+      doc.fillColor('#000000');
+
+      for (const med of inactiveMeds) {
+        drawMedRow(med, true);
+      }
+    }
+
+    // Reset fill color for footer
+    doc.fillColor('#000000');
 
     // Footer
     doc.fontSize(8).font('Helvetica')

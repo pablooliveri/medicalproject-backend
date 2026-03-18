@@ -46,7 +46,7 @@ const generateDeliveryReport = async (req, res) => {
   }
 };
 
-// GET /api/reports/resident/:id
+// GET /api/reports/resident/:id?month=3&year=2026
 const generateResidentReport = async (req, res) => {
   try {
     const resident = await Resident.findById(req.params.id);
@@ -54,12 +54,29 @@ const generateResidentReport = async (req, res) => {
       return res.status(404).json({ message: 'Resident not found' });
     }
 
+    const now = new Date();
+    const month = req.query.month ? parseInt(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? parseInt(req.query.year) : now.getFullYear();
+
+    const startOfMonth = new Date(year, month - 1, 1);
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // Find all medications that were active at any point during the requested month:
+    // - Started before or during the month
+    // - AND either still active OR deactivated during/after the month
     const resMeds = await ResidentMedication.find({
       resident: req.params.id,
-      isActive: true
+      startDate: { $lte: endOfMonth },
+      $or: [
+        { isActive: true },
+        { endDate: { $gte: startOfMonth } }
+      ]
     }).populate('medication');
 
     const medications = resMeds.map(med => {
+      // Determine if this medication was inactive during the requested month
+      const wasInactive = !med.isActive && med.endDate && new Date(med.endDate) <= endOfMonth;
+
       return {
         medicationName: med.medication.genericName.toUpperCase() +
           (med.medication.commercialName ? ` (${med.medication.commercialName})` : ''),
@@ -69,11 +86,17 @@ const generateResidentReport = async (req, res) => {
         snack: med.schedule.snack || 0,
         dinner: med.schedule.dinner || 0,
         formLabel: getFormLabel(med.medication),
-        stock: med.currentStock
+        stock: med.currentStock,
+        isActive: med.isActive,
+        endDate: med.endDate,
+        wasInactive
       };
     });
 
-    const pdfBuffer = await generateResidentReportPDF(resident, medications);
+    // Sort alphabetically by medication name
+    medications.sort((a, b) => a.medicationName.localeCompare(b.medicationName, 'es'));
+
+    const pdfBuffer = await generateResidentReportPDF(resident, medications, { month, year });
 
     res.set({
       'Content-Type': 'application/pdf',
