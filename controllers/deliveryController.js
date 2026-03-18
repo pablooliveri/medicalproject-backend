@@ -124,4 +124,155 @@ const getDeliveryHistory = async (req, res) => {
   }
 };
 
-module.exports = { getDeliveries, getDelivery, createDelivery, getDeliveryHistory };
+// PUT /api/deliveries/:id
+const updateDelivery = async (req, res) => {
+  try {
+    const delivery = await Delivery.findById(req.params.id);
+    if (!delivery) {
+      return res.status(404).json({ message: 'Delivery not found' });
+    }
+
+    const { deliveredBy, deliveryDate, notes } = req.body;
+    let newItems = req.body.items;
+    if (typeof newItems === 'string') {
+      newItems = JSON.parse(newItems);
+    }
+
+    // Reverse stock for old items
+    for (const oldItem of delivery.items) {
+      const resMed = await ResidentMedication.findById(oldItem.residentMedication);
+      if (resMed) {
+        const previousStock = resMed.currentStock;
+        const newStock = previousStock - Number(oldItem.quantity);
+        resMed.currentStock = newStock;
+        await resMed.save();
+
+        await StockMovement.create({
+          resident: delivery.resident,
+          residentMedication: resMed._id,
+          medication: oldItem.medication,
+          type: 'adjustment',
+          quantity: -Number(oldItem.quantity),
+          previousStock,
+          newStock,
+          notes: `Delivery edit reversal`
+        });
+      }
+    }
+
+    // Apply stock for new items
+    for (const item of newItems) {
+      const resMed = await ResidentMedication.findById(item.residentMedication);
+      if (resMed) {
+        const previousStock = resMed.currentStock;
+        const newStock = previousStock + Number(item.quantity);
+        resMed.currentStock = newStock;
+        await resMed.save();
+
+        await StockMovement.create({
+          resident: delivery.resident,
+          residentMedication: resMed._id,
+          medication: item.medication,
+          type: 'delivery',
+          quantity: Number(item.quantity),
+          previousStock,
+          newStock,
+          notes: `Delivery updated by ${deliveredBy}`
+        });
+      }
+    }
+
+    // Handle photos: use existingPhotos from frontend (user may have removed some)
+    let existingPhotos = req.body.existingPhotos;
+    if (typeof existingPhotos === 'string') {
+      try { existingPhotos = JSON.parse(existingPhotos); } catch { existingPhotos = delivery.photos; }
+    } else {
+      existingPhotos = delivery.photos;
+    }
+
+    // Delete removed photo files from disk
+    const fs = require('fs');
+    const path = require('path');
+    for (const oldPhoto of delivery.photos) {
+      if (!existingPhotos.includes(oldPhoto)) {
+        const photoPath = path.join(__dirname, '..', oldPhoto);
+        if (fs.existsSync(photoPath)) {
+          fs.unlinkSync(photoPath);
+        }
+      }
+    }
+
+    // Add any newly uploaded photos
+    const uploadedPhotos = req.files ? req.files.map(f => `/uploads/deliveries/${f.filename}`) : [];
+    const photos = [...existingPhotos, ...uploadedPhotos];
+
+    delivery.deliveredBy = deliveredBy || delivery.deliveredBy;
+    delivery.deliveryDate = deliveryDate || delivery.deliveryDate;
+    delivery.notes = notes !== undefined ? notes : delivery.notes;
+    delivery.items = newItems || delivery.items;
+    delivery.photos = photos;
+    await delivery.save();
+
+    await checkLowStock();
+
+    const populated = await Delivery.findById(delivery._id)
+      .populate('resident')
+      .populate('items.medication')
+      .populate('items.residentMedication');
+
+    res.json(populated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/deliveries/:id
+const deleteDelivery = async (req, res) => {
+  try {
+    const delivery = await Delivery.findById(req.params.id);
+    if (!delivery) {
+      return res.status(404).json({ message: 'Delivery not found' });
+    }
+
+    // Reverse stock for all items
+    for (const item of delivery.items) {
+      const resMed = await ResidentMedication.findById(item.residentMedication);
+      if (resMed) {
+        const previousStock = resMed.currentStock;
+        const newStock = previousStock - Number(item.quantity);
+        resMed.currentStock = Math.max(0, newStock);
+        await resMed.save();
+
+        await StockMovement.create({
+          resident: delivery.resident,
+          residentMedication: resMed._id,
+          medication: item.medication,
+          type: 'adjustment',
+          quantity: -Number(item.quantity),
+          previousStock,
+          newStock: Math.max(0, newStock),
+          notes: `Delivery deleted`
+        });
+      }
+    }
+
+    // Delete photo files
+    const fs = require('fs');
+    const path = require('path');
+    for (const photo of delivery.photos) {
+      const photoPath = path.join(__dirname, '..', photo);
+      if (fs.existsSync(photoPath)) {
+        fs.unlinkSync(photoPath);
+      }
+    }
+
+    await Delivery.findByIdAndDelete(req.params.id);
+    await checkLowStock();
+
+    res.json({ message: 'Delivery deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { getDeliveries, getDelivery, createDelivery, getDeliveryHistory, updateDelivery, deleteDelivery };
