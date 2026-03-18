@@ -25,6 +25,26 @@ const getFormLabel = (medication) => {
   return FORM_LABELS_ES[medication.form] || 'COMP';
 };
 
+/**
+ * Helper: draw text centered both horizontally and vertically inside a cell.
+ * @param {PDFDocument} doc
+ * @param {string} text
+ * @param {number} cellX - left edge of cell
+ * @param {number} cellY - top edge of cell
+ * @param {number} cellW - width of cell
+ * @param {number} cellH - height of cell
+ * @param {object} opts - extra PDFKit text options (align, strike, etc.)
+ */
+const drawCellText = (doc, text, cellX, cellY, cellW, cellH, opts = {}) => {
+  if (!text && text !== 0) return;
+  const str = String(text);
+  const fontSize = doc._fontSize || 9;
+  // Vertical center: offset by (cellHeight - fontSize) / 2
+  const textY = cellY + (cellH - fontSize) / 2;
+  const padding = 5;
+  doc.text(str, cellX + padding, textY, { width: cellW - padding * 2, ...opts });
+};
+
 const generateDeliveryPDF = async (delivery, resident, items) => {
   const settings = await Settings.findOne();
 
@@ -102,25 +122,33 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
     doc.moveTo(50, headerY).lineTo(545, headerY).stroke();
     headerY += 15;
 
-    // Table header
+    // Delivery table columns
+    const dCol1 = 50;   // Medicación
+    const dCol2 = 200;  // Dosis
+    const dCol3 = 300;  // Cantidad
+    const dCol4 = 380;  // Nuevo Stock
+    const dCol5 = 460;  // Cubre Hasta
+    const dTableRight = 545;
+    const dRowHeight = 22;
+    const dHeaderHeight = 22;
+
+    // Draw table header with borders
     const tableTop = headerY;
-    const col1 = 50;
-    const col2 = 200;
-    const col3 = 300;
-    const col4 = 380;
-    const col5 = 460;
+    doc.rect(dCol1, tableTop, dTableRight - dCol1, dHeaderHeight).stroke();
+    doc.moveTo(dCol2, tableTop).lineTo(dCol2, tableTop + dHeaderHeight).stroke();
+    doc.moveTo(dCol3, tableTop).lineTo(dCol3, tableTop + dHeaderHeight).stroke();
+    doc.moveTo(dCol4, tableTop).lineTo(dCol4, tableTop + dHeaderHeight).stroke();
+    doc.moveTo(dCol5, tableTop).lineTo(dCol5, tableTop + dHeaderHeight).stroke();
 
     doc.fontSize(9).font('Helvetica-Bold');
-    doc.text('Medicación', col1, tableTop);
-    doc.text('Dosis', col2, tableTop);
-    doc.text('Cantidad', col3, tableTop);
-    doc.text('Nuevo Stock', col4, tableTop);
-    doc.text('Cubre Hasta', col5, tableTop);
-
-    doc.moveTo(50, tableTop + 15).lineTo(545, tableTop + 15).stroke();
+    drawCellText(doc, 'Medicación', dCol1, tableTop, dCol2 - dCol1, dHeaderHeight);
+    drawCellText(doc, 'Dosis', dCol2, tableTop, dCol3 - dCol2, dHeaderHeight, { align: 'center' });
+    drawCellText(doc, 'Cantidad', dCol3, tableTop, dCol4 - dCol3, dHeaderHeight, { align: 'center' });
+    drawCellText(doc, 'Nuevo Stock', dCol4, tableTop, dCol5 - dCol4, dHeaderHeight, { align: 'center' });
+    drawCellText(doc, 'Cubre Hasta', dCol5, tableTop, dTableRight - dCol5, dHeaderHeight, { align: 'center' });
 
     // Table rows
-    let rowY = tableTop + 22;
+    let rowY = tableTop + dHeaderHeight;
     doc.font('Helvetica').fontSize(9);
 
     for (const item of items) {
@@ -129,13 +157,21 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
         rowY = 50;
       }
 
-      doc.text(item.medicationName, col1, rowY, { width: 145 });
-      doc.text(item.dosage, col2, rowY, { width: 95 });
-      doc.text(String(item.quantityDelivered), col3, rowY, { width: 75 });
-      doc.text(String(item.newStock), col4, rowY, { width: 75 });
-      doc.text(item.coverageDate || 'N/A', col5, rowY, { width: 85 });
+      // Draw row borders
+      doc.rect(dCol1, rowY, dTableRight - dCol1, dRowHeight).stroke();
+      doc.moveTo(dCol2, rowY).lineTo(dCol2, rowY + dRowHeight).stroke();
+      doc.moveTo(dCol3, rowY).lineTo(dCol3, rowY + dRowHeight).stroke();
+      doc.moveTo(dCol4, rowY).lineTo(dCol4, rowY + dRowHeight).stroke();
+      doc.moveTo(dCol5, rowY).lineTo(dCol5, rowY + dRowHeight).stroke();
 
-      rowY += 20;
+      doc.font('Helvetica').fontSize(9);
+      drawCellText(doc, item.medicationName, dCol1, rowY, dCol2 - dCol1, dRowHeight);
+      drawCellText(doc, item.dosage, dCol2, rowY, dCol3 - dCol2, dRowHeight, { align: 'center' });
+      drawCellText(doc, String(item.quantityDelivered), dCol3, rowY, dCol4 - dCol3, dRowHeight, { align: 'center' });
+      drawCellText(doc, String(item.newStock), dCol4, rowY, dCol5 - dCol4, dRowHeight, { align: 'center' });
+      drawCellText(doc, item.coverageDate || 'N/A', dCol5, rowY, dTableRight - dCol5, dRowHeight, { align: 'center' });
+
+      rowY += dRowHeight;
     }
 
     // Notes
@@ -265,9 +301,9 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
 
     // Draw table header with borders
     const tableHeaderY = headerY;
-    const headerHeight = 20;
+    const headerHeight = 22;
 
-    // Header background
+    // Header border
     doc.rect(colMed, tableHeaderY, tableRight - colMed, headerHeight).stroke();
 
     // Vertical lines for header
@@ -276,17 +312,17 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
     doc.moveTo(colSnack, tableHeaderY).lineTo(colSnack, tableHeaderY + headerHeight).stroke();
     doc.moveTo(colDinner, tableHeaderY).lineTo(colDinner, tableHeaderY + headerHeight).stroke();
 
-    // Header text
+    // Header text - centered in each cell
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000');
-    doc.text('Medicación', colMed + 5, tableHeaderY + 5, { width: colBreak - colMed - 10 });
-    doc.text('Desayuno', colBreak + 5, tableHeaderY + 5, { width: colLunch - colBreak - 10, align: 'center' });
-    doc.text('Almuerzo', colLunch + 5, tableHeaderY + 5, { width: colSnack - colLunch - 10, align: 'center' });
-    doc.text('Merienda', colSnack + 5, tableHeaderY + 5, { width: colDinner - colSnack - 10, align: 'center' });
-    doc.text('Cena', colDinner + 5, tableHeaderY + 5, { width: tableRight - colDinner - 10, align: 'center' });
+    drawCellText(doc, 'Medicación', colMed, tableHeaderY, colBreak - colMed, headerHeight);
+    drawCellText(doc, 'Desayuno', colBreak, tableHeaderY, colLunch - colBreak, headerHeight, { align: 'center' });
+    drawCellText(doc, 'Almuerzo', colLunch, tableHeaderY, colSnack - colLunch, headerHeight, { align: 'center' });
+    drawCellText(doc, 'Merienda', colSnack, tableHeaderY, colDinner - colSnack, headerHeight, { align: 'center' });
+    drawCellText(doc, 'Cena', colDinner, tableHeaderY, tableRight - colDinner, headerHeight, { align: 'center' });
 
     let rowY = tableHeaderY + headerHeight;
-    const rowHeight = 18;
-    const inactiveRowHeight = 28; // Taller rows for inactive meds to fit the "Baja" label
+    const rowHeight = 22;
+    const inactiveRowHeight = 30; // Taller rows for inactive meds to fit the "Baja" label
 
     // Helper to draw a medication row
     const drawMedRow = (med, isInactive) => {
@@ -315,38 +351,53 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
       doc.font('Helvetica').fontSize(9);
 
       if (isInactive) {
-        // Strikethrough for inactive medication name
-        doc.text(medName, colMed + 5, rowY + 3, { width: colBreak - colMed - 10, strike: true });
+        // For inactive: name with strikethrough near top, "Baja" label below
+        const nameY = rowY + 3;
+        doc.text(medName, colMed + 5, nameY, { width: colBreak - colMed - 10, strike: true });
 
         // Show deactivation month below the name
         if (med.endDate) {
           const endDate = new Date(med.endDate);
           const endMonthLabel = `Baja: ${MONTH_NAMES_ES[endDate.getMonth()]}-${String(endDate.getFullYear()).slice(-2)}`;
           doc.fontSize(7).font('Helvetica-Oblique').fillColor('#cc0000');
-          doc.text(endMonthLabel, colMed + 5, rowY + 15, { width: colBreak - colMed - 10 });
+          doc.text(endMonthLabel, colMed + 5, rowY + 17, { width: colBreak - colMed - 10 });
           doc.fillColor('#999999');
         }
+
+        // Schedule values vertically centered, with strikethrough
+        const formLabel = med.formLabel || 'COMP';
+        doc.font('Helvetica').fontSize(9);
+        if (med.breakfast > 0) {
+          drawCellText(doc, `${med.breakfast} ${formLabel}`, colBreak, rowY, colLunch - colBreak, currentRowHeight, { align: 'center', strike: true });
+        }
+        if (med.lunch > 0) {
+          drawCellText(doc, `${med.lunch} ${formLabel}`, colLunch, rowY, colSnack - colLunch, currentRowHeight, { align: 'center', strike: true });
+        }
+        if (med.snack > 0) {
+          drawCellText(doc, `${med.snack} ${formLabel}`, colSnack, rowY, colDinner - colSnack, currentRowHeight, { align: 'center', strike: true });
+        }
+        if (med.dinner > 0) {
+          const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
+          drawCellText(doc, dinnerText, colDinner, rowY, tableRight - colDinner, currentRowHeight, { align: 'center', strike: true });
+        }
       } else {
-        doc.text(medName, colMed + 5, rowY + 4, { width: colBreak - colMed - 10 });
-      }
+        // Active medication: all cells vertically + horizontally centered
+        drawCellText(doc, medName, colMed, rowY, colBreak - colMed, currentRowHeight);
 
-      // Schedule values - show "X COMP" format or blank for 0
-      const formLabel = med.formLabel || 'COMP';
-      const textY = rowY + (isInactive ? 3 : 4);
-      doc.font('Helvetica').fontSize(9);
-
-      if (med.breakfast > 0) {
-        doc.text(`${med.breakfast} ${formLabel}`, colBreak + 5, textY, { width: colLunch - colBreak - 10, align: 'center', strike: isInactive });
-      }
-      if (med.lunch > 0) {
-        doc.text(`${med.lunch} ${formLabel}`, colLunch + 5, textY, { width: colSnack - colLunch - 10, align: 'center', strike: isInactive });
-      }
-      if (med.snack > 0) {
-        doc.text(`${med.snack} ${formLabel}`, colSnack + 5, textY, { width: colDinner - colSnack - 10, align: 'center', strike: isInactive });
-      }
-      if (med.dinner > 0) {
-        const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
-        doc.text(dinnerText, colDinner + 5, textY, { width: tableRight - colDinner - 10, align: 'center', strike: isInactive });
+        const formLabel = med.formLabel || 'COMP';
+        if (med.breakfast > 0) {
+          drawCellText(doc, `${med.breakfast} ${formLabel}`, colBreak, rowY, colLunch - colBreak, currentRowHeight, { align: 'center' });
+        }
+        if (med.lunch > 0) {
+          drawCellText(doc, `${med.lunch} ${formLabel}`, colLunch, rowY, colSnack - colLunch, currentRowHeight, { align: 'center' });
+        }
+        if (med.snack > 0) {
+          drawCellText(doc, `${med.snack} ${formLabel}`, colSnack, rowY, colDinner - colSnack, currentRowHeight, { align: 'center' });
+        }
+        if (med.dinner > 0) {
+          const dinnerText = med.dinnerNote ? `${med.dinner} ${formLabel} ${med.dinnerNote}` : `${med.dinner} ${formLabel}`;
+          drawCellText(doc, dinnerText, colDinner, rowY, tableRight - colDinner, currentRowHeight, { align: 'center' });
+        }
       }
 
       rowY += currentRowHeight;
