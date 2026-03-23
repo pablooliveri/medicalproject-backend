@@ -13,8 +13,7 @@ const expenseSchema = new mongoose.Schema({
   },
   unitPrice: {
     type: Number,
-    required: true,
-    min: 0
+    required: true
   },
   quantity: {
     type: Number,

@@ -497,20 +497,8 @@ const generateStatementPDFRoute = async (req, res) => {
     });
 
     if (!statement) {
-      // Generate preview statement data without saving
-      const config = await BillingConfig.findOne({ resident: residentId });
-      const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
-      const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-      const monthlyFee = config ? config.monthlyFee : 0;
-      statement = {
-        month: Number(month),
-        year: Number(year),
-        monthlyFee,
-        totalExpenses,
-        totalAmount: monthlyFee + totalExpenses,
-        amountPaid: 0,
-        balance: monthlyFee + totalExpenses
-      };
+      // Save the statement so it appears in debtors/summary queries
+      statement = await recalculateStatement(residentId, Number(month), Number(year));
     }
 
     const expenses = await Expense.find({
