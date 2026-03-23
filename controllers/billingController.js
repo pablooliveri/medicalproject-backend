@@ -16,18 +16,23 @@ const recalculateStatement = async (residentId, month, year) => {
   const expenses = await Expense.find({ resident: residentId, month, year });
   const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 
+  // Always get current config to use latest monthlyFee
+  const config = await BillingConfig.findOne({ resident: residentId });
+  const currentMonthlyFee = config ? config.monthlyFee : 0;
+
   // Get or create statement
   let statement = await MonthlyStatement.findOne({ resident: residentId, month, year });
 
   if (!statement) {
-    // Look up the resident's billing config for the monthly fee
-    const config = await BillingConfig.findOne({ resident: residentId });
     statement = new MonthlyStatement({
       resident: residentId,
       month,
       year,
-      monthlyFee: config ? config.monthlyFee : 0
+      monthlyFee: currentMonthlyFee
     });
+  } else {
+    // Update monthlyFee from config in case it changed
+    statement.monthlyFee = currentMonthlyFee;
   }
 
   // Sum all payments for this statement
