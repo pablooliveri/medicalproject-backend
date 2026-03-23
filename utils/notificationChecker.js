@@ -1,6 +1,7 @@
 const ResidentMedication = require('../models/ResidentMedication');
 const Notification = require('../models/Notification');
 const Settings = require('../models/Settings');
+const BillingConfig = require('../models/BillingConfig');
 
 const checkLowStock = async () => {
   try {
@@ -71,4 +72,40 @@ const checkLowStock = async () => {
   }
 };
 
-module.exports = { checkLowStock };
+const checkBillingAdjustments = async () => {
+  try {
+    const currentMonth = new Date().getMonth() + 1;
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth })
+      .populate('resident');
+
+    for (const config of configs) {
+      if (!config.resident || !config.resident.isActive) continue;
+
+      const existing = await Notification.findOne({
+        type: 'billing_adjustment',
+        resident: config.resident._id,
+        createdAt: { $gte: twentyFourHoursAgo }
+      });
+
+      if (!existing) {
+        await Notification.create({
+          type: 'billing_adjustment',
+          title: `Ajuste de precio: ${config.resident.firstName} ${config.resident.lastName}`,
+          message: `Corresponde aplicar el ajuste del ${config.adjustmentPercentage}% a la cuota mensual de ${config.resident.firstName} ${config.resident.lastName} este mes.`,
+          resident: config.resident._id,
+          data: {
+            adjustmentPercentage: config.adjustmentPercentage,
+            currentMonthlyFee: config.monthlyFee,
+            month: currentMonth
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error checking billing adjustments:', error);
+  }
+};
+
+module.exports = { checkLowStock, checkBillingAdjustments };

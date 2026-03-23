@@ -1,0 +1,579 @@
+const BillingConfig = require('../models/BillingConfig');
+const Expense = require('../models/Expense');
+const MonthlyStatement = require('../models/MonthlyStatement');
+const Payment = require('../models/Payment');
+const Resident = require('../models/Resident');
+const { generateStatementPDF, generateAllStatementsPDF, FULL_MONTH_NAMES_ES } = require('../utils/pdfGenerator');
+
+// ─── Internal helper ─────────────────────────────────────────────────────────
+
+/**
+ * Recalculates totals and balance for a MonthlyStatement.
+ * Creates the statement if it doesn't exist yet.
+ */
+const recalculateStatement = async (residentId, month, year) => {
+  // Sum all expenses for this resident/month/year
+  const expenses = await Expense.find({ resident: residentId, month, year });
+  const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+
+  // Get or create statement
+  let statement = await MonthlyStatement.findOne({ resident: residentId, month, year });
+
+  if (!statement) {
+    // Look up the resident's billing config for the monthly fee
+    const config = await BillingConfig.findOne({ resident: residentId });
+    statement = new MonthlyStatement({
+      resident: residentId,
+      month,
+      year,
+      monthlyFee: config ? config.monthlyFee : 0
+    });
+  }
+
+  // Sum all payments for this statement
+  const payments = await Payment.find({ statement: statement._id });
+  const amountPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  statement.totalExpenses = totalExpenses;
+  statement.totalAmount = statement.monthlyFee + totalExpenses;
+  statement.amountPaid = amountPaid;
+  statement.balance = statement.totalAmount - amountPaid;
+  statement.status = statement.balance <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'pending';
+
+  await statement.save();
+  return statement;
+};
+
+// ─── BillingConfig ────────────────────────────────────────────────────────────
+
+// GET /api/billing/config/:residentId
+const getBillingConfig = async (req, res) => {
+  try {
+    let config = await BillingConfig.findOne({ resident: req.params.residentId });
+    if (!config) {
+      config = { resident: req.params.residentId, monthlyFee: 0, adjustmentPercentage: 0, adjustmentMonths: [], notes: '' };
+    }
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/billing/config/:residentId  (upsert)
+const upsertBillingConfig = async (req, res) => {
+  try {
+    const { monthlyFee, adjustmentPercentage, adjustmentMonths, notes } = req.body;
+    const config = await BillingConfig.findOneAndUpdate(
+      { resident: req.params.residentId },
+      { monthlyFee, adjustmentPercentage, adjustmentMonths, notes },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+
+// GET /api/billing/expenses/:residentId  ?month=&year=
+const getExpenses = async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const query = { resident: req.params.residentId };
+    if (month) query.month = Number(month);
+    if (year) query.year = Number(year);
+
+    const expenses = await Expense.find(query).sort({ createdAt: 1 });
+    res.json(expenses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/billing/expenses/:residentId
+const createExpense = async (req, res) => {
+  try {
+    const { concept, unitPrice, quantity, month, year, notes } = req.body;
+    const photo = req.file ? `/uploads/expenses/${req.file.filename}` : null;
+
+    const expense = await Expense.create({
+      resident: req.params.residentId,
+      concept,
+      unitPrice: Number(unitPrice),
+      quantity: Number(quantity) || 1,
+      month: Number(month),
+      year: Number(year),
+      photo,
+      notes
+    });
+
+    await recalculateStatement(req.params.residentId, Number(month), Number(year));
+
+    res.status(201).json(expense);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// PUT /api/billing/expenses/:expenseId
+const updateExpense = async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.expenseId);
+    if (!expense) return res.status(404).json({ message: 'Expense not found' });
+
+    const { concept, unitPrice, quantity, notes } = req.body;
+    if (concept !== undefined) expense.concept = concept;
+    if (unitPrice !== undefined) expense.unitPrice = Number(unitPrice);
+    if (quantity !== undefined) expense.quantity = Number(quantity);
+    if (notes !== undefined) expense.notes = notes;
+    if (req.file) expense.photo = `/uploads/expenses/${req.file.filename}`;
+
+    await expense.save();
+    await recalculateStatement(expense.resident, expense.month, expense.year);
+
+    res.json(expense);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/billing/expenses/:expenseId
+const deleteExpense = async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.expenseId);
+    if (!expense) return res.status(404).json({ message: 'Expense not found' });
+
+    const { resident, month, year } = expense;
+
+    // Delete photo file if exists
+    if (expense.photo) {
+      const fs = require('fs');
+      const path = require('path');
+      const photoPath = path.join(__dirname, '..', expense.photo);
+      if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
+    }
+
+    await Expense.findByIdAndDelete(req.params.expenseId);
+    await recalculateStatement(resident, month, year);
+
+    res.json({ message: 'Expense deleted' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── Monthly Statements ───────────────────────────────────────────────────────
+
+// GET /api/billing/statements/:residentId  ?year=
+const getStatements = async (req, res) => {
+  try {
+    const query = { resident: req.params.residentId };
+    if (req.query.year) query.year = Number(req.query.year);
+
+    const statements = await MonthlyStatement.find(query).sort({ year: -1, month: -1 });
+    res.json(statements);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/statements/:residentId/:month/:year
+const getStatement = async (req, res) => {
+  try {
+    const { residentId, month, year } = req.params;
+    let statement = await MonthlyStatement.findOne({
+      resident: residentId,
+      month: Number(month),
+      year: Number(year)
+    });
+
+    // If no statement yet, return a computed preview
+    if (!statement) {
+      const config = await BillingConfig.findOne({ resident: residentId });
+      const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+      const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+      const monthlyFee = config ? config.monthlyFee : 0;
+      return res.json({
+        resident: residentId,
+        month: Number(month),
+        year: Number(year),
+        monthlyFee,
+        totalExpenses,
+        totalAmount: monthlyFee + totalExpenses,
+        amountPaid: 0,
+        balance: monthlyFee + totalExpenses,
+        status: 'pending',
+        adjustmentApplied: false,
+        isPreview: true
+      });
+    }
+
+    res.json(statement);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/billing/statements/:residentId  — create/lock statement for a month
+const createStatement = async (req, res) => {
+  try {
+    const { month, year, applyAdjustment } = req.body;
+    const residentId = req.params.residentId;
+
+    const config = await BillingConfig.findOne({ resident: residentId });
+    let monthlyFee = config ? config.monthlyFee : 0;
+    let adjustmentApplied = false;
+
+    // Apply adjustment if requested or if this month is in adjustmentMonths
+    const isAdjustmentMonth = config && config.adjustmentMonths.includes(Number(month));
+    if ((applyAdjustment || isAdjustmentMonth) && config && config.adjustmentPercentage > 0) {
+      monthlyFee = monthlyFee * (1 + config.adjustmentPercentage / 100);
+      monthlyFee = Math.round(monthlyFee);
+      adjustmentApplied = true;
+
+      // Update the config's monthly fee for future months
+      if (adjustmentApplied) {
+        config.monthlyFee = monthlyFee;
+        await config.save();
+      }
+    }
+
+    // Upsert statement
+    const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+    const totalAmount = monthlyFee + totalExpenses;
+
+    const statement = await MonthlyStatement.findOneAndUpdate(
+      { resident: residentId, month: Number(month), year: Number(year) },
+      { monthlyFee, totalExpenses, totalAmount, adjustmentApplied, balance: totalAmount, status: 'pending' },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    res.status(201).json(statement);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// PUT /api/billing/statements/:statementId  — recalculate
+const updateStatement = async (req, res) => {
+  try {
+    const statement = await MonthlyStatement.findById(req.params.statementId);
+    if (!statement) return res.status(404).json({ message: 'Statement not found' });
+
+    if (req.body.notes !== undefined) statement.notes = req.body.notes;
+    if (req.body.monthlyFee !== undefined) {
+      statement.monthlyFee = Number(req.body.monthlyFee);
+    }
+
+    await statement.save();
+    const updated = await recalculateStatement(statement.resident, statement.month, statement.year);
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+
+// GET /api/billing/payments/:statementId
+const getPayments = async (req, res) => {
+  try {
+    const payments = await Payment.find({ statement: req.params.statementId }).sort({ paymentDate: -1 });
+    res.json(payments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/billing/payments/:statementId
+const createPayment = async (req, res) => {
+  try {
+    const statement = await MonthlyStatement.findById(req.params.statementId);
+    if (!statement) return res.status(404).json({ message: 'Statement not found' });
+
+    const { amount, paymentDate, method, notes } = req.body;
+    const payment = await Payment.create({
+      statement: statement._id,
+      resident: statement.resident,
+      amount: Number(amount),
+      paymentDate: paymentDate || new Date(),
+      method: method || 'cash',
+      notes
+    });
+
+    await recalculateStatement(statement.resident, statement.month, statement.year);
+
+    res.status(201).json(payment);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/billing/payments/:paymentId
+const deletePayment = async (req, res) => {
+  try {
+    const payment = await Payment.findById(req.params.paymentId);
+    if (!payment) return res.status(404).json({ message: 'Payment not found' });
+
+    const statement = await MonthlyStatement.findById(payment.statement);
+    await Payment.findByIdAndDelete(req.params.paymentId);
+
+    if (statement) {
+      await recalculateStatement(statement.resident, statement.month, statement.year);
+    }
+
+    res.json({ message: 'Payment deleted' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── Aggregated ───────────────────────────────────────────────────────────────
+
+// GET /api/billing/debtors  ?sucursal=&month=&year=
+const getDebtors = async (req, res) => {
+  try {
+    const { sucursal, month, year } = req.query;
+    const query = { balance: { $gt: 0 } };
+    if (month) query.month = Number(month);
+    if (year) query.year = Number(year);
+
+    const statements = await MonthlyStatement.find(query)
+      .populate('resident')
+      .sort({ balance: -1 });
+
+    // Filter by sucursal after populate
+    const filtered = sucursal
+      ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
+      : statements.filter(s => s.resident);
+
+    res.json(filtered);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/summary  ?sucursal=&month=&year=
+const getSummary = async (req, res) => {
+  try {
+    const { sucursal, month, year } = req.query;
+    const query = {};
+    if (month) query.month = Number(month);
+    if (year) query.year = Number(year);
+
+    const statements = await MonthlyStatement.find(query).populate('resident');
+
+    const filtered = sucursal
+      ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
+      : statements.filter(s => s.resident);
+
+    const summary = {
+      totalBilled: 0,
+      totalFees: 0,
+      totalExpenses: 0,
+      totalPaid: 0,
+      totalPending: 0,
+      residentCount: filtered.length,
+      debtorCount: 0
+    };
+
+    for (const s of filtered) {
+      summary.totalBilled += s.totalAmount || 0;
+      summary.totalFees += s.monthlyFee || 0;
+      summary.totalExpenses += s.totalExpenses || 0;
+      summary.totalPaid += s.amountPaid || 0;
+      summary.totalPending += s.balance || 0;
+      if (s.balance > 0) summary.debtorCount++;
+    }
+
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/adjustment-alerts
+const getAdjustmentAlerts = async (req, res) => {
+  try {
+    const currentMonth = new Date().getMonth() + 1;
+    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth })
+      .populate('resident');
+
+    const alerts = configs.filter(c => c.resident && c.resident.isActive);
+    res.json(alerts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/configs  — all residents with their billing config
+const getAllConfigs = async (req, res) => {
+  try {
+    const residents = await Resident.find({ isActive: true }).sort({ lastName: 1, firstName: 1 });
+    const configs = await BillingConfig.find({});
+    const configMap = {};
+    configs.forEach(c => { configMap[c.resident.toString()] = c; });
+
+    const result = residents.map(r => ({
+      resident: r,
+      config: configMap[r._id.toString()] || {
+        monthlyFee: 0,
+        adjustmentPercentage: 0,
+        adjustmentMonths: [],
+        notes: ''
+      }
+    }));
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── PDF Reports ──────────────────────────────────────────────────────────────
+
+// GET /api/billing/pdf/statement/:residentId/:month/:year
+const generateStatementPDFRoute = async (req, res) => {
+  try {
+    const { residentId, month, year } = req.params;
+
+    const resident = await Resident.findById(residentId);
+    if (!resident) return res.status(404).json({ message: 'Resident not found' });
+
+    let statement = await MonthlyStatement.findOne({
+      resident: residentId,
+      month: Number(month),
+      year: Number(year)
+    });
+
+    if (!statement) {
+      // Generate preview statement data without saving
+      const config = await BillingConfig.findOne({ resident: residentId });
+      const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+      const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+      const monthlyFee = config ? config.monthlyFee : 0;
+      statement = {
+        month: Number(month),
+        year: Number(year),
+        monthlyFee,
+        totalExpenses,
+        totalAmount: monthlyFee + totalExpenses,
+        amountPaid: 0,
+        balance: monthlyFee + totalExpenses
+      };
+    }
+
+    const expenses = await Expense.find({
+      resident: residentId,
+      month: Number(month),
+      year: Number(year)
+    }).sort({ createdAt: 1 });
+
+    const payments = statement._id
+      ? await Payment.find({ statement: statement._id }).sort({ paymentDate: 1 })
+      : [];
+
+    const pdfBuffer = await generateStatementPDF(resident, statement, expenses, payments);
+
+    const monthName = FULL_MONTH_NAMES_ES[Number(month) - 1];
+    const filename = `${resident.firstName}-${resident.lastName}-${monthName}-${year}.pdf`;
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length
+    });
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/pdf/statements-all/:month/:year  ?sucursal=
+const generateAllStatementsPDFRoute = async (req, res) => {
+  try {
+    const { month, year } = req.params;
+    const { sucursal } = req.query;
+
+    const residentFilter = { isActive: true };
+    if (sucursal) residentFilter.sucursal = sucursal;
+
+    const residents = await Resident.find(residentFilter).sort({ lastName: 1, firstName: 1 });
+    if (residents.length === 0) {
+      return res.status(404).json({ message: 'No active residents found' });
+    }
+
+    const residentsData = [];
+    for (const resident of residents) {
+      const statement = await MonthlyStatement.findOne({
+        resident: resident._id,
+        month: Number(month),
+        year: Number(year)
+      });
+
+      const config = await BillingConfig.findOne({ resident: resident._id });
+      let stmtData = statement;
+
+      if (!stmtData) {
+        const expenses = await Expense.find({ resident: resident._id, month: Number(month), year: Number(year) });
+        const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+        const monthlyFee = config ? config.monthlyFee : 0;
+        stmtData = {
+          month: Number(month),
+          year: Number(year),
+          monthlyFee,
+          totalExpenses,
+          totalAmount: monthlyFee + totalExpenses,
+          amountPaid: 0,
+          balance: monthlyFee + totalExpenses
+        };
+      }
+
+      const expenses = await Expense.find({
+        resident: resident._id,
+        month: Number(month),
+        year: Number(year)
+      }).sort({ createdAt: 1 });
+
+      residentsData.push({ resident, statement: stmtData, expenses });
+    }
+
+    const pdfBuffer = await generateAllStatementsPDF(residentsData, { month: Number(month), year: Number(year) });
+    const monthName = FULL_MONTH_NAMES_ES[Number(month) - 1];
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="estados-cuenta-${monthName}-${year}.pdf"`,
+      'Content-Length': pdfBuffer.length
+    });
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  getBillingConfig,
+  upsertBillingConfig,
+  getAllConfigs,
+  getExpenses,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  getStatements,
+  getStatement,
+  createStatement,
+  updateStatement,
+  getPayments,
+  createPayment,
+  deletePayment,
+  getDebtors,
+  getSummary,
+  getAdjustmentAlerts,
+  generateStatementPDFRoute,
+  generateAllStatementsPDFRoute
+};

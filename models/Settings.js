@@ -33,6 +33,22 @@ const settingsSchema = new mongoose.Schema({
   branches: {
     type: [String],
     default: []
+  },
+  website: {
+    type: String,
+    default: ''
+  },
+  currency: {
+    type: String,
+    default: '$U'
+  },
+  statementIntroText: {
+    type: String,
+    default: 'Estimadas Familias, Adjuntamos Estado de Cuenta del Mes'
+  },
+  statementFooterText: {
+    type: String,
+    default: 'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.'
   }
 }, {
   timestamps: true

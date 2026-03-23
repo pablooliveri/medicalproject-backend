@@ -8,6 +8,11 @@ const MONTH_NAMES_ES = [
   'jul', 'ago', 'sep', 'oct', 'nov', 'dic'
 ];
 
+const FULL_MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
+
 const FORM_LABELS_ES = {
   tablet: 'COMP',
   capsule: 'CÁP',
@@ -612,4 +617,328 @@ const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
   });
 };
 
-module.exports = { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, getFormLabel, FORM_LABELS_ES };
+/**
+ * Format number as $U X.XXX (Uruguayan peso style)
+ */
+const formatCurrency = (amount, currency = '$U') => {
+  if (amount === null || amount === undefined) return `${currency} 0`;
+  const formatted = Number(amount).toLocaleString('es-UY');
+  return `${currency} ${formatted}`;
+};
+
+/**
+ * Draw the company header (logo + name + address + phone) on the current page.
+ * Returns the Y position after the header separator line.
+ */
+const drawCompanyHeader = (doc, settings, logoPath, logoExists) => {
+  let headerY = 50;
+
+  if (logoExists) {
+    doc.image(logoPath, 50, headerY, { width: 80 });
+    doc.fontSize(18).font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
+    if (settings.address) {
+      doc.fontSize(9).font('Helvetica').text(settings.address, 140, headerY + 35);
+    }
+    if (settings.phone) {
+      doc.fontSize(9).font('Helvetica').text(`Tel: ${settings.phone}`, 140, headerY + 48);
+    }
+    headerY += 90;
+  } else {
+    doc.fontSize(18).font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text(settings?.companyName || 'Casa de Salud Residencial', 50, headerY);
+    if (settings?.address) {
+      doc.fontSize(9).font('Helvetica').text(settings.address, 50, headerY + 28);
+    }
+    headerY += 55;
+  }
+
+  doc.moveTo(50, headerY).lineTo(545, headerY).stroke();
+  return headerY + 15;
+};
+
+/**
+ * Generate a monthly account statement PDF for a single resident.
+ * Matches the "Ana Brun Febrero 2026" format exactly.
+ */
+const generateStatementPDF = async (resident, statement, expenses, payments) => {
+  const settings = await Settings.findOne() || {};
+
+  const month = statement.month;
+  const year = statement.year;
+  const monthName = FULL_MONTH_NAMES_ES[month - 1];
+  const currency = settings.currency || '$U';
+
+  const introText = settings.statementIntroText
+    ? `${settings.statementIntroText} ${monthName} ${year}`
+    : `Estimadas Familias, Adjuntamos Estado de Cuenta del Mes ${monthName} ${year}`;
+
+  const footerText = settings.statementFooterText ||
+    'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.';
+
+  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
+  const logoExists = logoPath && fs.existsSync(logoPath);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header
+    let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+
+    // Intro text (green, like client PDF)
+    doc.fontSize(11).font('Helvetica').fillColor('#2e7d32')
+      .text(introText, 50, y);
+    y += 20;
+
+    doc.fontSize(11).font('Helvetica').fillColor('#2e7d32')
+      .text(`Residente:  ${resident.firstName} ${resident.lastName}`, 50, y);
+    y += 30;
+
+    doc.fillColor('#000000');
+
+    // Table columns
+    const colConcept = 50;
+    const colImporte = 290;
+    const colCantidad = 390;
+    const colTotal = 460;
+    const tableRight = 545;
+    const rowH = 22;
+    const headerH = 24;
+
+    // Table header
+    doc.rect(colConcept, y, tableRight - colConcept, headerH).stroke();
+    doc.moveTo(colImporte, y).lineTo(colImporte, y + headerH).stroke();
+    doc.moveTo(colCantidad, y).lineTo(colCantidad, y + headerH).stroke();
+    doc.moveTo(colTotal, y).lineTo(colTotal, y + headerH).stroke();
+
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000');
+    drawCellText(doc, 'Concepto', colConcept, y, colImporte - colConcept, headerH);
+    drawCellText(doc, 'Importe', colImporte, y, colCantidad - colImporte, headerH, { align: 'center' });
+    drawCellText(doc, 'Cantidad', colCantidad, y, colTotal - colCantidad, headerH, { align: 'center' });
+    drawCellText(doc, 'Total', colTotal, y, tableRight - colTotal, headerH, { align: 'center' });
+    y += headerH;
+
+    // Helper to draw a data row
+    const drawRow = (concept, importe, cantidad, total, isBold = false, bgColor = null) => {
+      if (y > 720) { doc.addPage(); y = 50; }
+      if (bgColor) {
+        doc.rect(colConcept, y, tableRight - colConcept, rowH).fill(bgColor);
+      }
+      doc.fillColor('#000000');
+      doc.rect(colConcept, y, tableRight - colConcept, rowH).stroke();
+      doc.moveTo(colImporte, y).lineTo(colImporte, y + rowH).stroke();
+      doc.moveTo(colCantidad, y).lineTo(colCantidad, y + rowH).stroke();
+      doc.moveTo(colTotal, y).lineTo(colTotal, y + rowH).stroke();
+
+      doc.font(isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor('#000000');
+      drawCellText(doc, concept, colConcept, y, colImporte - colConcept, rowH);
+      if (importe !== null) drawCellText(doc, importe, colImporte, y, colCantidad - colImporte, rowH, { align: 'center' });
+      if (cantidad !== null) drawCellText(doc, cantidad, colCantidad, y, colTotal - colCantidad, rowH, { align: 'center' });
+      drawCellText(doc, total, colTotal, y, tableRight - colTotal, rowH, { align: 'right' });
+      y += rowH;
+    };
+
+    // Row 1: Monthly fee (bold)
+    drawRow(
+      `Mensualidad ${monthName} ${year}`,
+      formatCurrency(statement.monthlyFee, currency),
+      '1',
+      formatCurrency(statement.monthlyFee, currency),
+      true
+    );
+
+    // Expense rows (alternating background)
+    expenses.forEach((exp, idx) => {
+      const bg = idx % 2 === 0 ? null : '#f9f9f9';
+      drawRow(
+        exp.concept,
+        formatCurrency(exp.unitPrice, currency),
+        String(exp.quantity),
+        formatCurrency(exp.amount, currency),
+        false,
+        bg
+      );
+    });
+
+    // Empty filler rows to keep consistent height (min 8 rows total)
+    const totalRows = 1 + expenses.length;
+    const minRows = 8;
+    for (let i = totalRows; i < minRows; i++) {
+      if (y > 720) break;
+      doc.rect(colConcept, y, tableRight - colConcept, rowH).stroke();
+      doc.moveTo(colImporte, y).lineTo(colImporte, y + rowH).stroke();
+      doc.moveTo(colCantidad, y).lineTo(colCantidad, y + rowH).stroke();
+      doc.moveTo(colTotal, y).lineTo(colTotal, y + rowH).stroke();
+      y += rowH;
+    }
+
+    // Total Mes row
+    y += 5;
+    const totalRowH = 24;
+    doc.rect(colTotal - 80, y, 80 + (tableRight - colTotal), totalRowH).stroke();
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+    drawCellText(doc, 'Total Mes', colTotal - 80, y, 80, totalRowH, { align: 'right' });
+    drawCellText(doc, formatCurrency(statement.totalAmount, currency), colTotal, y, tableRight - colTotal, totalRowH, { align: 'right' });
+    y += totalRowH + 25;
+
+    // Footer text (green, like client PDF)
+    doc.fontSize(10).font('Helvetica').fillColor('#2e7d32');
+    const footerLines = footerText.split('\n');
+    for (const line of footerLines) {
+      doc.text(line, 50, y);
+      y += 18;
+    }
+
+    // Page footer: website | phone – email
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      const footerParts = [
+        settings.website,
+        settings.phone ? `Teléfono ${settings.phone}` : null,
+        settings.email ? `info@${settings.email}` : null
+      ].filter(Boolean).join('  –  ');
+
+      if (footerParts) {
+        doc.fontSize(8).font('Helvetica').fillColor('#555555')
+          .text(footerParts, 50, 760, { align: 'center', width: 495 });
+      }
+    }
+
+    doc.end();
+  });
+};
+
+/**
+ * Generate a single PDF with all residents' statements for a given month/year.
+ * One resident per page.
+ */
+const generateAllStatementsPDF = async (residentsData, options = {}) => {
+  const settings = await Settings.findOne() || {};
+  const month = options.month || (new Date().getMonth() + 1);
+  const year = options.year || new Date().getFullYear();
+  const currency = settings.currency || '$U';
+  const monthName = FULL_MONTH_NAMES_ES[month - 1];
+
+  const introText = settings.statementIntroText
+    ? `${settings.statementIntroText} ${monthName} ${year}`
+    : `Estimadas Familias, Adjuntamos Estado de Cuenta del Mes ${monthName} ${year}`;
+
+  const footerText = settings.statementFooterText ||
+    'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.';
+
+  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
+  const logoExists = logoPath && fs.existsSync(logoPath);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    residentsData.forEach(({ resident, statement, expenses }, index) => {
+      if (index > 0) doc.addPage();
+
+      let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+
+      doc.fontSize(11).font('Helvetica').fillColor('#2e7d32').text(introText, 50, y);
+      y += 20;
+      doc.fontSize(11).font('Helvetica').fillColor('#2e7d32')
+        .text(`Residente:  ${resident.firstName} ${resident.lastName}`, 50, y);
+      y += 30;
+      doc.fillColor('#000000');
+
+      const colConcept = 50, colImporte = 290, colCantidad = 390, colTotal = 460, tableRight = 545;
+      const rowH = 22, headerH = 24;
+
+      // Table header
+      doc.rect(colConcept, y, tableRight - colConcept, headerH).stroke();
+      doc.moveTo(colImporte, y).lineTo(colImporte, y + headerH).stroke();
+      doc.moveTo(colCantidad, y).lineTo(colCantidad, y + headerH).stroke();
+      doc.moveTo(colTotal, y).lineTo(colTotal, y + headerH).stroke();
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000');
+      drawCellText(doc, 'Concepto', colConcept, y, colImporte - colConcept, headerH);
+      drawCellText(doc, 'Importe', colImporte, y, colCantidad - colImporte, headerH, { align: 'center' });
+      drawCellText(doc, 'Cantidad', colCantidad, y, colTotal - colCantidad, headerH, { align: 'center' });
+      drawCellText(doc, 'Total', colTotal, y, tableRight - colTotal, headerH, { align: 'center' });
+      y += headerH;
+
+      const drawRow = (concept, importe, cantidad, total, isBold = false, bgColor = null) => {
+        if (bgColor) doc.rect(colConcept, y, tableRight - colConcept, rowH).fill(bgColor);
+        doc.fillColor('#000000');
+        doc.rect(colConcept, y, tableRight - colConcept, rowH).stroke();
+        doc.moveTo(colImporte, y).lineTo(colImporte, y + rowH).stroke();
+        doc.moveTo(colCantidad, y).lineTo(colCantidad, y + rowH).stroke();
+        doc.moveTo(colTotal, y).lineTo(colTotal, y + rowH).stroke();
+        doc.font(isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor('#000000');
+        drawCellText(doc, concept, colConcept, y, colImporte - colConcept, rowH);
+        if (importe !== null) drawCellText(doc, importe, colImporte, y, colCantidad - colImporte, rowH, { align: 'center' });
+        if (cantidad !== null) drawCellText(doc, cantidad, colCantidad, y, colTotal - colCantidad, rowH, { align: 'center' });
+        drawCellText(doc, total, colTotal, y, tableRight - colTotal, rowH, { align: 'right' });
+        y += rowH;
+      };
+
+      const fee = statement ? statement.monthlyFee : 0;
+      const totalAmount = statement ? statement.totalAmount : 0;
+
+      drawRow(`Mensualidad ${monthName} ${year}`, formatCurrency(fee, currency), '1', formatCurrency(fee, currency), true);
+
+      (expenses || []).forEach((exp, idx) => {
+        drawRow(exp.concept, formatCurrency(exp.unitPrice, currency), String(exp.quantity), formatCurrency(exp.amount, currency), false, idx % 2 === 0 ? null : '#f9f9f9');
+      });
+
+      const totalRows = 1 + (expenses || []).length;
+      for (let i = totalRows; i < 8; i++) {
+        if (y > 720) break;
+        doc.rect(colConcept, y, tableRight - colConcept, rowH).stroke();
+        doc.moveTo(colImporte, y).lineTo(colImporte, y + rowH).stroke();
+        doc.moveTo(colCantidad, y).lineTo(colCantidad, y + rowH).stroke();
+        doc.moveTo(colTotal, y).lineTo(colTotal, y + rowH).stroke();
+        y += rowH;
+      }
+
+      y += 5;
+      const totalRowH = 24;
+      doc.rect(colTotal - 80, y, 80 + (tableRight - colTotal), totalRowH).stroke();
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+      drawCellText(doc, 'Total Mes', colTotal - 80, y, 80, totalRowH, { align: 'right' });
+      drawCellText(doc, formatCurrency(totalAmount, currency), colTotal, y, tableRight - colTotal, totalRowH, { align: 'right' });
+      y += totalRowH + 25;
+
+      doc.fontSize(10).font('Helvetica').fillColor('#2e7d32');
+      const footerLines = footerText.split('\n');
+      for (const line of footerLines) {
+        doc.text(line, 50, y);
+        y += 18;
+      }
+      doc.fillColor('#000000');
+    });
+
+    // Page footers
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      const footerParts = [
+        settings.website,
+        settings.phone ? `Teléfono ${settings.phone}` : null,
+        settings.email ? `info@${settings.email}` : null
+      ].filter(Boolean).join('  –  ');
+
+      if (footerParts) {
+        doc.fontSize(8).font('Helvetica').fillColor('#555555')
+          .text(footerParts, 50, 760, { align: 'center', width: 495 });
+      }
+    }
+
+    doc.end();
+  });
+};
+
+module.exports = { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, generateStatementPDF, generateAllStatementsPDF, getFormLabel, FORM_LABELS_ES, FULL_MONTH_NAMES_ES };

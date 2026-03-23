@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['low_stock', 'out_of_stock', 'delivery', 'medication_change', 'general'],
+    enum: ['low_stock', 'out_of_stock', 'delivery', 'medication_change', 'general', 'billing_adjustment'],
     required: true
   },
   title: {

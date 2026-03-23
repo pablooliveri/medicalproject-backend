@@ -7,8 +7,9 @@ const uploadsDir = path.join(__dirname, '..', 'uploads');
 const deliveriesDir = path.join(uploadsDir, 'deliveries');
 const logoDir = path.join(uploadsDir, 'logo');
 const residentsDir = path.join(uploadsDir, 'residents');
+const expensesDir = path.join(uploadsDir, 'expenses');
 
-[uploadsDir, deliveriesDir, logoDir, residentsDir].forEach(dir => {
+[uploadsDir, deliveriesDir, logoDir, residentsDir, expensesDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -72,4 +73,20 @@ const uploadResidentPhoto = multer({
   limits: { fileSize: 2 * 1024 * 1024 }
 }).single('photo');
 
-module.exports = { uploadDeliveryPhotos, uploadLogo, uploadResidentPhoto };
+const expenseStorage = multer.diskStorage({
+  destination: function(req, file, cb) {
+    cb(null, expensesDir);
+  },
+  filename: function(req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'expense-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadExpensePhoto = multer({
+  storage: expenseStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }
+}).single('photo');
+
+module.exports = { uploadDeliveryPhotos, uploadLogo, uploadResidentPhoto, uploadExpensePhoto };
