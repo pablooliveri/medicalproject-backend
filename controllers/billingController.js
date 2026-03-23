@@ -62,10 +62,10 @@ const getBillingConfig = async (req, res) => {
 // POST /api/billing/config/:residentId  (upsert)
 const upsertBillingConfig = async (req, res) => {
   try {
-    const { monthlyFee, adjustmentPercentage, adjustmentMonths, notes } = req.body;
+    const { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, recurringExpenses } = req.body;
     const config = await BillingConfig.findOneAndUpdate(
       { resident: req.params.residentId },
-      { monthlyFee, adjustmentPercentage, adjustmentMonths, notes },
+      { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, ...(recurringExpenses !== undefined ? { recurringExpenses } : {}) },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json(config);
@@ -218,25 +218,22 @@ const getStatement = async (req, res) => {
 // POST /api/billing/statements/:residentId  — create/lock statement for a month
 const createStatement = async (req, res) => {
   try {
-    const { month, year, applyAdjustment } = req.body;
+    const { month, year, applyAdjustment, adjustmentPercentage: bodyPercentage } = req.body;
     const residentId = req.params.residentId;
 
     const config = await BillingConfig.findOne({ resident: residentId });
     let monthlyFee = config ? config.monthlyFee : 0;
     let adjustmentApplied = false;
 
-    // Apply adjustment if requested or if this month is in adjustmentMonths
-    const isAdjustmentMonth = config && config.adjustmentMonths.includes(Number(month));
-    if ((applyAdjustment || isAdjustmentMonth) && config && config.adjustmentPercentage > 0) {
-      monthlyFee = monthlyFee * (1 + config.adjustmentPercentage / 100);
-      monthlyFee = Math.round(monthlyFee);
+    // Apply adjustment: use percentage from body (user-entered) if provided, else fall back to config
+    const pct = bodyPercentage !== undefined ? Number(bodyPercentage) : (config?.adjustmentPercentage || 0);
+    if (applyAdjustment && pct > 0) {
+      monthlyFee = Math.round(monthlyFee * (1 + pct / 100));
       adjustmentApplied = true;
 
       // Update the config's monthly fee for future months
-      if (adjustmentApplied) {
-        config.monthlyFee = monthlyFee;
-        await config.save();
-      }
+      config.monthlyFee = monthlyFee;
+      await config.save();
     }
 
     // Upsert statement
@@ -263,6 +260,7 @@ const updateStatement = async (req, res) => {
     if (!statement) return res.status(404).json({ message: 'Statement not found' });
 
     if (req.body.notes !== undefined) statement.notes = req.body.notes;
+    if (req.body.addenda !== undefined) statement.addenda = req.body.addenda;
     if (req.body.monthlyFee !== undefined) {
       statement.monthlyFee = Number(req.body.monthlyFee);
     }
@@ -270,6 +268,56 @@ const updateStatement = async (req, res) => {
     await statement.save();
     const updated = await recalculateStatement(statement.resident, statement.month, statement.year);
     res.json(updated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/billing/statements/:statementId
+const deleteStatement = async (req, res) => {
+  try {
+    const statement = await MonthlyStatement.findById(req.params.statementId);
+    if (!statement) return res.status(404).json({ message: 'Statement not found' });
+
+    // Delete all payments and expenses for this statement's month/year/resident
+    await Payment.deleteMany({ statement: statement._id });
+    await Expense.deleteMany({ resident: statement.resident, month: statement.month, year: statement.year });
+    await statement.deleteOne();
+
+    res.json({ message: 'Statement deleted' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/billing/expenses/:residentId/load-recurring
+const loadRecurringExpenses = async (req, res) => {
+  try {
+    const { month, year } = req.body;
+    const residentId = req.params.residentId;
+    const config = await BillingConfig.findOne({ resident: residentId });
+    if (!config || !config.recurringExpenses.length) {
+      return res.json({ created: 0, message: 'No recurring expenses configured' });
+    }
+
+    let created = 0;
+    for (const rec of config.recurringExpenses) {
+      const exists = await Expense.findOne({ resident: residentId, month: Number(month), year: Number(year), concept: rec.concept });
+      if (!exists) {
+        await Expense.create({
+          resident: residentId,
+          concept: rec.concept,
+          unitPrice: rec.unitPrice,
+          quantity: rec.quantity,
+          month: Number(month),
+          year: Number(year)
+        });
+        created++;
+      }
+    }
+
+    await recalculateStatement(residentId, Number(month), Number(year));
+    res.json({ created });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -568,6 +616,8 @@ module.exports = {
   getStatement,
   createStatement,
   updateStatement,
+  deleteStatement,
+  loadRecurringExpenses,
   getPayments,
   createPayment,
   deletePayment,

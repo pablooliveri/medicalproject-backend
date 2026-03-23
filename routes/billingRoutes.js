@@ -21,7 +21,9 @@ const {
   getSummary,
   getAdjustmentAlerts,
   generateStatementPDFRoute,
-  generateAllStatementsPDFRoute
+  generateAllStatementsPDFRoute,
+  deleteStatement,
+  loadRecurringExpenses
 } = require('../controllers/billingController');
 
 router.use(protect);
@@ -46,12 +48,14 @@ router.put('/expenses/:expenseId', (req, res, next) => {
   });
 }, updateExpense);
 router.delete('/expenses/:expenseId', deleteExpense);
+router.post('/expenses/:residentId/load-recurring', loadRecurringExpenses);
 
 // Statements
 router.get('/statements/:residentId', getStatements);
 router.get('/statements/:residentId/:month/:year', getStatement);
 router.post('/statements/:residentId', createStatement);
 router.put('/statements/:statementId', updateStatement);
+router.delete('/statements/:statementId', deleteStatement);
 
 // Payments
 router.get('/payments/:statementId', getPayments);

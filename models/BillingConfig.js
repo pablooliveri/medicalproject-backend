@@ -22,7 +22,12 @@ const billingConfigSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: ''
-  }
+  },
+  recurringExpenses: [{
+    concept: { type: String, required: true },
+    unitPrice: { type: Number, default: 0 },
+    quantity: { type: Number, default: 1 }
+  }]
 }, {
   timestamps: true
 });

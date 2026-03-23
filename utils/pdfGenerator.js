@@ -622,7 +622,7 @@ const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
  */
 const formatCurrency = (amount, currency = '$U') => {
   if (amount === null || amount === undefined) return `${currency} 0`;
-  const formatted = Number(amount).toLocaleString('es-UY');
+  const formatted = Math.round(Number(amount)).toLocaleString('es-UY');
   return `${currency} ${formatted}`;
 };
 
@@ -787,6 +787,13 @@ const generateStatementPDF = async (resident, statement, expenses, payments) => 
     drawCellText(doc, formatCurrency(statement.totalAmount, currency), colTotal, y, tableRight - colTotal, totalRowH, { align: 'right' });
     y += totalRowH + 25;
 
+    // Addenda (custom message for this statement)
+    if (statement.addenda && statement.addenda.trim()) {
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#1a237e')
+        .text(statement.addenda, 50, y, { width: 495 });
+      y += doc.heightOfString(statement.addenda, { width: 495, fontSize: 10 }) + 14;
+    }
+
     // Footer text (green, like client PDF)
     doc.fontSize(10).font('Helvetica').fillColor('#2e7d32');
     const footerLines = footerText.split('\n');
@@ -911,6 +918,12 @@ const generateAllStatementsPDF = async (residentsData, options = {}) => {
       drawCellText(doc, 'Total Mes', colTotal - 80, y, 80, totalRowH, { align: 'right' });
       drawCellText(doc, formatCurrency(totalAmount, currency), colTotal, y, tableRight - colTotal, totalRowH, { align: 'right' });
       y += totalRowH + 25;
+
+      if (statement?.addenda && statement.addenda.trim()) {
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#1a237e')
+          .text(statement.addenda, 50, y, { width: 495 });
+        y += doc.heightOfString(statement.addenda, { width: 495, fontSize: 10 }) + 14;
+      }
 
       doc.fontSize(10).font('Helvetica').fillColor('#2e7d32');
       const footerLines = footerText.split('\n');

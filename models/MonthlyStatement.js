@@ -48,6 +48,10 @@ const monthlyStatementSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: ''
+  },
+  addenda: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true
