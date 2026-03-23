@@ -22,6 +22,8 @@ const {
   getAdjustmentAlerts,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
+  generateSummaryPDFRoute,
+  generateDebtorsPDFRoute,
   deleteStatement,
   loadRecurringExpenses
 } = require('../controllers/billingController');
@@ -70,5 +72,7 @@ router.get('/adjustment-alerts', getAdjustmentAlerts);
 // PDF
 router.get('/pdf/statement/:residentId/:month/:year', generateStatementPDFRoute);
 router.get('/pdf/statements-all/:month/:year', generateAllStatementsPDFRoute);
+router.get('/pdf/summary/:month/:year', generateSummaryPDFRoute);
+router.get('/pdf/debtors/:month/:year', generateDebtorsPDFRoute);
 
 module.exports = router;

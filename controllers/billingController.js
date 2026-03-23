@@ -3,7 +3,7 @@ const Expense = require('../models/Expense');
 const MonthlyStatement = require('../models/MonthlyStatement');
 const Payment = require('../models/Payment');
 const Resident = require('../models/Resident');
-const { generateStatementPDF, generateAllStatementsPDF, FULL_MONTH_NAMES_ES } = require('../utils/pdfGenerator');
+const { generateStatementPDF, generateAllStatementsPDF, generateLedgerPDF, FULL_MONTH_NAMES_ES } = require('../utils/pdfGenerator');
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
@@ -597,6 +597,62 @@ const generateAllStatementsPDFRoute = async (req, res) => {
   }
 };
 
+// GET /api/billing/pdf/summary/:month/:year  ?sucursal=
+const generateSummaryPDFRoute = async (req, res) => {
+  try {
+    const { month, year } = req.params;
+    const { sucursal } = req.query;
+    const query = { month: Number(month), year: Number(year) };
+
+    const statements = await MonthlyStatement.find(query).populate('resident').sort({ 'resident.lastName': 1 });
+    const filtered = sucursal
+      ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
+      : statements.filter(s => s.resident);
+
+    const pdfBuffer = await generateLedgerPDF(filtered, {
+      month: Number(month), year: Number(year), type: 'summary', sucursal
+    });
+
+    const monthName = FULL_MONTH_NAMES_ES[Number(month) - 1];
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="libro-ventas-${monthName}-${year}.pdf"`,
+      'Content-Length': pdfBuffer.length
+    });
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/pdf/debtors/:month/:year  ?sucursal=
+const generateDebtorsPDFRoute = async (req, res) => {
+  try {
+    const { month, year } = req.params;
+    const { sucursal } = req.query;
+    const query = { month: Number(month), year: Number(year), balance: { $gt: 0 } };
+
+    const statements = await MonthlyStatement.find(query).populate('resident').sort({ balance: -1 });
+    const filtered = sucursal
+      ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
+      : statements.filter(s => s.resident);
+
+    const pdfBuffer = await generateLedgerPDF(filtered, {
+      month: Number(month), year: Number(year), type: 'debtors', sucursal
+    });
+
+    const monthName = FULL_MONTH_NAMES_ES[Number(month) - 1];
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="deudores-${monthName}-${year}.pdf"`,
+      'Content-Length': pdfBuffer.length
+    });
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getBillingConfig,
   upsertBillingConfig,
@@ -618,5 +674,7 @@ module.exports = {
   getSummary,
   getAdjustmentAlerts,
   generateStatementPDFRoute,
-  generateAllStatementsPDFRoute
+  generateAllStatementsPDFRoute,
+  generateSummaryPDFRoute,
+  generateDebtorsPDFRoute
 };

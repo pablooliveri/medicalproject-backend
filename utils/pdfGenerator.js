@@ -954,4 +954,145 @@ const generateAllStatementsPDF = async (residentsData, options = {}) => {
   });
 };
 
-module.exports = { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, generateStatementPDF, generateAllStatementsPDF, getFormLabel, FORM_LABELS_ES, FULL_MONTH_NAMES_ES };
+/**
+ * Generate a ledger PDF (libro de ventas or debtors list).
+ * @param {Array} statements - populated MonthlyStatement documents
+ * @param {Object} options - { month, year, type: 'summary'|'debtors', sucursal }
+ */
+const generateLedgerPDF = async (statements, options = {}) => {
+  const settings = await Settings.findOne() || {};
+  const month = options.month;
+  const year = options.year;
+  const type = options.type || 'summary';
+  const currency = settings.currency || '$U';
+  const monthName = FULL_MONTH_NAMES_ES[month - 1];
+  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
+  const logoExists = logoPath && fs.existsSync(logoPath);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+
+    // Title
+    const title = type === 'debtors'
+      ? `LISTA DE DEUDORES — ${monthName} ${year}`
+      : `LIBRO DE VENTAS — ${monthName} ${year}`;
+
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000000')
+      .text(title, 50, y, { align: 'center', width: 495 });
+    y += 25;
+
+    if (options.sucursal) {
+      doc.fontSize(10).font('Helvetica').fillColor('#555555')
+        .text(`Sucursal: ${options.sucursal}`, 50, y);
+      y += 18;
+    }
+    doc.fillColor('#000000');
+
+    const hasSucursal = statements.some(s => s.resident && s.resident.sucursal);
+
+    // Column definitions
+    const cols = hasSucursal
+      ? [
+          { label: 'Residente',   x: 50,  w: 120, align: 'left'  },
+          { label: 'Sucursal',    x: 170, w: 65,  align: 'left'  },
+          { label: 'Mensualidad', x: 235, w: 65,  align: 'right' },
+          { label: 'Gastos',      x: 300, w: 60,  align: 'right' },
+          { label: 'Total',       x: 360, w: 60,  align: 'right' },
+          { label: 'Pagado',      x: 420, w: 60,  align: 'right' },
+          { label: 'Saldo',       x: 480, w: 65,  align: 'right' },
+        ]
+      : [
+          { label: 'Residente',   x: 50,  w: 155, align: 'left'  },
+          { label: 'Mensualidad', x: 205, w: 75,  align: 'right' },
+          { label: 'Gastos',      x: 280, w: 65,  align: 'right' },
+          { label: 'Total',       x: 345, w: 65,  align: 'right' },
+          { label: 'Pagado',      x: 410, w: 65,  align: 'right' },
+          { label: 'Saldo',       x: 475, w: 70,  align: 'right' },
+        ];
+
+    const tableRight = 545;
+    const rowH = 20;
+    const headerH = 22;
+
+    // Header row
+    doc.rect(50, y, tableRight - 50, headerH).fill('#2e7d32');
+    doc.fillColor('#ffffff').fontSize(8).font('Helvetica-Bold');
+    cols.forEach(col => {
+      drawCellText(doc, col.label, col.x, y, col.w, headerH, { align: col.align });
+    });
+    y += headerH;
+
+    let totFee = 0, totExp = 0, totTotal = 0, totPaid = 0, totBalance = 0;
+
+    statements.forEach((s, idx) => {
+      if (y > 750) {
+        doc.addPage();
+        y = 50;
+      }
+
+      const bg = idx % 2 === 0 ? '#ffffff' : '#f5f5f5';
+      doc.rect(50, y, tableRight - 50, rowH).fill(bg);
+
+      totFee     += s.monthlyFee    || 0;
+      totExp     += s.totalExpenses || 0;
+      totTotal   += s.totalAmount   || 0;
+      totPaid    += s.amountPaid    || 0;
+      totBalance += s.balance       || 0;
+
+      doc.fillColor('#000000').fontSize(8).font('Helvetica');
+
+      let ci = 0;
+      const name = `${s.resident.firstName} ${s.resident.lastName}`;
+      drawCellText(doc, name, cols[ci].x, y, cols[ci].w, rowH); ci++;
+      if (hasSucursal) {
+        drawCellText(doc, s.resident.sucursal || '', cols[ci].x, y, cols[ci].w, rowH); ci++;
+      }
+      drawCellText(doc, formatCurrency(s.monthlyFee,    currency), cols[ci].x, y, cols[ci].w, rowH, { align: 'right' }); ci++;
+      drawCellText(doc, formatCurrency(s.totalExpenses, currency), cols[ci].x, y, cols[ci].w, rowH, { align: 'right' }); ci++;
+      drawCellText(doc, formatCurrency(s.totalAmount,   currency), cols[ci].x, y, cols[ci].w, rowH, { align: 'right' }); ci++;
+      drawCellText(doc, formatCurrency(s.amountPaid,    currency), cols[ci].x, y, cols[ci].w, rowH, { align: 'right' }); ci++;
+
+      doc.fillColor(s.balance > 0 ? '#c62828' : '#2e7d32');
+      drawCellText(doc, formatCurrency(s.balance, currency), cols[ci].x, y, cols[ci].w, rowH, { align: 'right' });
+
+      doc.fillColor('#000000');
+      doc.rect(50, y, tableRight - 50, rowH).stroke();
+      y += rowH;
+    });
+
+    // Totals row
+    y += 4;
+    doc.rect(50, y, tableRight - 50, 22).fill('#e8f5e9');
+    doc.fillColor('#000000').fontSize(8).font('Helvetica-Bold');
+
+    let ci = 0;
+    drawCellText(doc, `TOTALES (${statements.length})`, cols[ci].x, y, cols[ci].w, 22); ci++;
+    if (hasSucursal) ci++;
+    drawCellText(doc, formatCurrency(totFee,     currency), cols[ci].x, y, cols[ci].w, 22, { align: 'right' }); ci++;
+    drawCellText(doc, formatCurrency(totExp,     currency), cols[ci].x, y, cols[ci].w, 22, { align: 'right' }); ci++;
+    drawCellText(doc, formatCurrency(totTotal,   currency), cols[ci].x, y, cols[ci].w, 22, { align: 'right' }); ci++;
+    drawCellText(doc, formatCurrency(totPaid,    currency), cols[ci].x, y, cols[ci].w, 22, { align: 'right' }); ci++;
+    doc.fillColor('#c62828');
+    drawCellText(doc, formatCurrency(totBalance, currency), cols[ci].x, y, cols[ci].w, 22, { align: 'right' });
+    doc.fillColor('#000000');
+    doc.rect(50, y, tableRight - 50, 22).stroke();
+
+    // Page footers
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(8).font('Helvetica').fillColor('#555555')
+        .text(`Generado el ${new Date().toLocaleString('es-UY')}`, 50, 760, { align: 'center', width: 495 });
+    }
+
+    doc.end();
+  });
+};
+
+module.exports = { generateDeliveryPDF, generateResidentReportPDF, generateAllResidentsReportPDF, generateStatementPDF, generateAllStatementsPDF, generateLedgerPDF, getFormLabel, FORM_LABELS_ES, FULL_MONTH_NAMES_ES };
