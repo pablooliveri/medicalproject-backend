@@ -96,10 +96,21 @@ const getExpenses = async (req, res) => {
   }
 };
 
+// Helper: check if month is locked for a resident
+const isMonthLocked = async (residentId, month, year) => {
+  const stmt = await MonthlyStatement.findOne({ resident: residentId, month, year });
+  return stmt && stmt.locked;
+};
+
 // POST /api/billing/expenses/:residentId
 const createExpense = async (req, res) => {
   try {
     const { concept, unitPrice, quantity, month, year, notes } = req.body;
+
+    if (await isMonthLocked(req.params.residentId, Number(month), Number(year))) {
+      return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado. Desbloquealo para agregar gastos.' });
+    }
+
     const photo = req.file ? `/uploads/expenses/${req.file.filename}` : null;
 
     const expense = await Expense.create({
@@ -127,6 +138,10 @@ const updateExpense = async (req, res) => {
     const expense = await Expense.findById(req.params.expenseId);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
+    if (await isMonthLocked(expense.resident, expense.month, expense.year)) {
+      return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado. Desbloquealo para editar gastos.' });
+    }
+
     const { concept, unitPrice, quantity, notes } = req.body;
     if (concept !== undefined) expense.concept = concept;
     if (unitPrice !== undefined) expense.unitPrice = Number(unitPrice);
@@ -149,9 +164,12 @@ const deleteExpense = async (req, res) => {
     const expense = await Expense.findById(req.params.expenseId);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
+    if (await isMonthLocked(expense.resident, expense.month, expense.year)) {
+      return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado. Desbloquealo para eliminar gastos.' });
+    }
+
     const { resident, month, year } = expense;
 
-    // Delete photo file if exists
     if (expense.photo) {
       const fs = require('fs');
       const path = require('path');
@@ -300,6 +318,11 @@ const loadRecurringExpenses = async (req, res) => {
   try {
     const { month, year } = req.body;
     const residentId = req.params.residentId;
+
+    if (await isMonthLocked(residentId, Number(month), Number(year))) {
+      return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado.' });
+    }
+
     const config = await BillingConfig.findOne({ resident: residentId });
     if (!config || !config.recurringExpenses.length) {
       return res.json({ created: 0, message: 'No recurring expenses configured' });
@@ -625,6 +648,21 @@ const generateAllStatementsPDFRoute = async (req, res) => {
   }
 };
 
+// PUT /api/billing/statements/:statementId/toggle-lock
+const toggleStatementLock = async (req, res) => {
+  try {
+    const statement = await MonthlyStatement.findById(req.params.statementId);
+    if (!statement) return res.status(404).json({ message: 'Statement not found' });
+
+    statement.locked = !statement.locked;
+    await statement.save();
+
+    res.json({ locked: statement.locked });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // GET /api/billing/pdf/summary/:month/:year  ?sucursal=
 const generateSummaryPDFRoute = async (req, res) => {
   try {
@@ -702,6 +740,7 @@ module.exports = {
   getSummary,
   getAdjustmentAlerts,
   getStatementsMonthly,
+  toggleStatementLock,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
   generateSummaryPDFRoute,

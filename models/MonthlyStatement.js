@@ -52,6 +52,10 @@ const monthlyStatementSchema = new mongoose.Schema({
   addenda: {
     type: String,
     default: ''
+  },
+  locked: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
