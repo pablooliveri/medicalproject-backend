@@ -20,6 +20,7 @@ const {
   getDebtors,
   getSummary,
   getAdjustmentAlerts,
+  getStatementsMonthly,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
   generateSummaryPDFRoute,
@@ -67,6 +68,7 @@ router.delete('/payments/:paymentId', deletePayment);
 // Aggregated
 router.get('/debtors', getDebtors);
 router.get('/summary', getSummary);
+router.get('/statements-monthly', getStatementsMonthly);
 router.get('/adjustment-alerts', getAdjustmentAlerts);
 
 // PDF

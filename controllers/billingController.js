@@ -416,6 +416,11 @@ const getSummary = async (req, res) => {
     if (month) query.month = Number(month);
     if (year) query.year = Number(year);
 
+    // Count active residents (optionally filtered by sucursal)
+    const residentQuery = { isActive: true };
+    if (sucursal) residentQuery.sucursal = sucursal;
+    const activeResidentCount = await Resident.countDocuments(residentQuery);
+
     const statements = await MonthlyStatement.find(query).populate('resident');
 
     const filtered = sucursal
@@ -429,6 +434,7 @@ const getSummary = async (req, res) => {
       totalPaid: 0,
       totalPending: 0,
       residentCount: filtered.length,
+      activeResidentCount,
       debtorCount: 0
     };
 
@@ -442,6 +448,28 @@ const getSummary = async (req, res) => {
     }
 
     res.json(summary);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /api/billing/statements-monthly  ?sucursal=&month=&year=
+const getStatementsMonthly = async (req, res) => {
+  try {
+    const { sucursal, month, year } = req.query;
+    const query = {};
+    if (month) query.month = Number(month);
+    if (year) query.year = Number(year);
+
+    const statements = await MonthlyStatement.find(query)
+      .populate('resident')
+      .sort({ 'resident.lastName': 1 });
+
+    const filtered = sucursal
+      ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
+      : statements.filter(s => s.resident);
+
+    res.json(filtered);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -673,6 +701,7 @@ module.exports = {
   getDebtors,
   getSummary,
   getAdjustmentAlerts,
+  getStatementsMonthly,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
   generateSummaryPDFRoute,
