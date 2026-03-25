@@ -663,6 +663,26 @@ const toggleStatementLock = async (req, res) => {
   }
 };
 
+// PUT /api/billing/lock-month  body: { month, year, locked, sucursal? }
+const lockMonth = async (req, res) => {
+  try {
+    const { month, year, locked, sucursal } = req.body;
+    const query = { month: Number(month), year: Number(year) };
+
+    let statements = await MonthlyStatement.find(query).populate('resident');
+    if (sucursal) {
+      statements = statements.filter(s => s.resident && s.resident.sucursal === sucursal);
+    }
+
+    const ids = statements.map(s => s._id);
+    await MonthlyStatement.updateMany({ _id: { $in: ids } }, { locked: !!locked });
+
+    res.json({ updated: ids.length, locked: !!locked });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // GET /api/billing/pdf/summary/:month/:year  ?sucursal=
 const generateSummaryPDFRoute = async (req, res) => {
   try {
@@ -741,6 +761,7 @@ module.exports = {
   getAdjustmentAlerts,
   getStatementsMonthly,
   toggleStatementLock,
+  lockMonth,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
   generateSummaryPDFRoute,

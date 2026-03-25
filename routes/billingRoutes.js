@@ -22,6 +22,7 @@ const {
   getAdjustmentAlerts,
   getStatementsMonthly,
   toggleStatementLock,
+  lockMonth,
   generateStatementPDFRoute,
   generateAllStatementsPDFRoute,
   generateSummaryPDFRoute,
@@ -61,6 +62,7 @@ router.post('/statements/:residentId', createStatement);
 router.put('/statements/:statementId', updateStatement);
 router.delete('/statements/:statementId', deleteStatement);
 router.put('/statements/:statementId/toggle-lock', toggleStatementLock);
+router.put('/lock-month', lockMonth);
 
 // Payments
 router.get('/payments/:statementId', getPayments);
