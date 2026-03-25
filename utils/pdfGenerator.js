@@ -2,6 +2,7 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 const Settings = require('../models/Settings');
+const { fetchImageBuffer } = require('./cloudinary');
 
 const MONTH_NAMES_ES = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -52,6 +53,7 @@ const drawCellText = (doc, text, cellX, cellY, cellW, cellH, opts = {}) => {
 
 const generateDeliveryPDF = async (delivery, resident, items) => {
   const settings = await Settings.findOne();
+  const logoBuffer = await loadLogoBuffer(settings);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
@@ -61,32 +63,24 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Header with logo
-    const logoPath = settings && settings.logo
-      ? path.join(__dirname, '..', settings.logo)
-      : null;
-
     let headerY = 50;
 
-    if (logoPath && fs.existsSync(logoPath)) {
-      doc.image(logoPath, 50, headerY, { width: 80 });
+    if (logoBuffer) {
+      doc.image(logoBuffer, 50, headerY, { width: 80 });
       doc.fontSize(18).font('Helvetica-Bold')
         .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
       if (settings.address) {
-        doc.fontSize(9).font('Helvetica')
-          .text(settings.address, 140, headerY + 35);
+        doc.fontSize(9).font('Helvetica').text(settings.address, 140, headerY + 35);
       }
       if (settings.phone) {
-        doc.fontSize(9).font('Helvetica')
-          .text(settings.phone, 140, headerY + 48);
+        doc.fontSize(9).font('Helvetica').text(settings.phone, 140, headerY + 48);
       }
       headerY += 90;
     } else {
       doc.fontSize(18).font('Helvetica-Bold')
         .text(settings?.companyName || 'Casa de Salud Residencial', 50, headerY);
       if (settings?.address) {
-        doc.fontSize(9).font('Helvetica')
-          .text(settings.address, 50, headerY + 25);
+        doc.fontSize(9).font('Helvetica').text(settings.address, 50, headerY + 25);
       }
       headerY += 50;
     }
@@ -233,13 +227,12 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
 
 const generateResidentReportPDF = async (resident, medications, options = {}) => {
   const settings = await Settings.findOne();
+  const logoBuffer = await loadLogoBuffer(settings);
 
-  // Use provided month/year or default to current
   const month = options.month || (new Date().getMonth() + 1);
   const year = options.year || new Date().getFullYear();
   const monthYear = `${MONTH_NAMES_ES[month - 1]}-${String(year).slice(-2)}`;
 
-  // Separate active and inactive medications
   const activeMeds = medications.filter(m => !m.wasInactive);
   const inactiveMeds = medications.filter(m => m.wasInactive);
 
@@ -251,15 +244,10 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Header
-    const logoPath = settings && settings.logo
-      ? path.join(__dirname, '..', settings.logo)
-      : null;
-
     let headerY = 50;
 
-    if (logoPath && fs.existsSync(logoPath)) {
-      doc.image(logoPath, 50, headerY, { width: 80 });
+    if (logoBuffer) {
+      doc.image(logoBuffer, 50, headerY, { width: 80 });
       doc.fontSize(18).font('Helvetica-Bold')
         .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
       headerY += 90;
@@ -444,6 +432,7 @@ const generateResidentReportPDF = async (resident, medications, options = {}) =>
 
 const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
   const settings = await Settings.findOne();
+  const logoBuffer = await loadLogoBuffer(settings);
 
   const month = options.month || (new Date().getMonth() + 1);
   const year = options.year || new Date().getFullYear();
@@ -457,11 +446,6 @@ const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const logoPath = settings && settings.logo
-      ? path.join(__dirname, '..', settings.logo)
-      : null;
-    const logoExists = logoPath && fs.existsSync(logoPath);
-
     residentsData.forEach((entry, index) => {
       const { resident, medications } = entry;
       const activeMeds = medications.filter(m => !m.wasInactive);
@@ -469,11 +453,10 @@ const generateAllResidentsReportPDF = async (residentsData, options = {}) => {
 
       if (index > 0) doc.addPage();
 
-      // Header
       let headerY = 50;
 
-      if (logoExists) {
-        doc.image(logoPath, 50, headerY, { width: 80 });
+      if (logoBuffer) {
+        doc.image(logoBuffer, 50, headerY, { width: 80 });
         doc.fontSize(18).font('Helvetica-Bold')
           .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
         headerY += 90;
@@ -628,13 +611,14 @@ const formatCurrency = (amount, currency = '$U') => {
 
 /**
  * Draw the company header (logo + name + address + phone) on the current page.
+ * logoBuffer: Buffer of the logo image (or null)
  * Returns the Y position after the header separator line.
  */
-const drawCompanyHeader = (doc, settings, logoPath, logoExists) => {
+const drawCompanyHeader = (doc, settings, logoBuffer) => {
   let headerY = 50;
 
-  if (logoExists) {
-    doc.image(logoPath, 50, headerY, { width: 80 });
+  if (logoBuffer) {
+    doc.image(logoBuffer, 50, headerY, { width: 80 });
     doc.fontSize(18).font('Helvetica-Bold')
       .fillColor('#000000')
       .text(settings.companyName || 'Casa de Salud Residencial', 140, headerY + 10);
@@ -660,11 +644,30 @@ const drawCompanyHeader = (doc, settings, logoPath, logoExists) => {
 };
 
 /**
+ * Load logo as Buffer from Cloudinary URL or local path.
+ */
+const loadLogoBuffer = async (settings) => {
+  if (!settings || !settings.logo) return null;
+  try {
+    if (settings.logo.startsWith('http')) {
+      return await fetchImageBuffer(settings.logo);
+    }
+    // Legacy local path
+    const localPath = path.join(__dirname, '..', settings.logo);
+    if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
+  } catch (e) {
+    // If logo can't be loaded, continue without it
+  }
+  return null;
+};
+
+/**
  * Generate a monthly account statement PDF for a single resident.
  * Matches the "Ana Brun Febrero 2026" format exactly.
  */
 const generateStatementPDF = async (resident, statement, expenses, payments) => {
   const settings = await Settings.findOne() || {};
+  const logoBuffer = await loadLogoBuffer(settings);
 
   const month = statement.month;
   const year = statement.year;
@@ -678,9 +681,6 @@ const generateStatementPDF = async (resident, statement, expenses, payments) => 
   const footerText = settings.statementFooterText ||
     'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.';
 
-  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
-  const logoExists = logoPath && fs.existsSync(logoPath);
-
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
     const chunks = [];
@@ -689,7 +689,7 @@ const generateStatementPDF = async (resident, statement, expenses, payments) => 
     doc.on('error', reject);
 
     // Header
-    let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+    let y = drawCompanyHeader(doc, settings, logoBuffer);
 
     // Intro text (green, like client PDF)
     doc.fontSize(11).font('Helvetica').fillColor('#2e7d32')
@@ -828,6 +828,7 @@ const generateStatementPDF = async (resident, statement, expenses, payments) => 
  */
 const generateAllStatementsPDF = async (residentsData, options = {}) => {
   const settings = await Settings.findOne() || {};
+  const logoBuffer = await loadLogoBuffer(settings);
   const month = options.month || (new Date().getMonth() + 1);
   const year = options.year || new Date().getFullYear();
   const currency = settings.currency || '$U';
@@ -840,9 +841,6 @@ const generateAllStatementsPDF = async (residentsData, options = {}) => {
   const footerText = settings.statementFooterText ||
     'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.';
 
-  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
-  const logoExists = logoPath && fs.existsSync(logoPath);
-
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
     const chunks = [];
@@ -853,7 +851,7 @@ const generateAllStatementsPDF = async (residentsData, options = {}) => {
     residentsData.forEach(({ resident, statement, expenses }, index) => {
       if (index > 0) doc.addPage();
 
-      let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+      let y = drawCompanyHeader(doc, settings, logoBuffer);
 
       doc.fontSize(11).font('Helvetica').fillColor('#2e7d32').text(introText, 50, y);
       y += 20;
@@ -961,13 +959,12 @@ const generateAllStatementsPDF = async (residentsData, options = {}) => {
  */
 const generateLedgerPDF = async (statements, options = {}) => {
   const settings = await Settings.findOne() || {};
+  const logoBuffer = await loadLogoBuffer(settings);
   const month = options.month;
   const year = options.year;
   const type = options.type || 'summary';
   const currency = settings.currency || '$U';
   const monthName = FULL_MONTH_NAMES_ES[month - 1];
-  const logoPath = settings.logo ? path.join(__dirname, '..', settings.logo) : null;
-  const logoExists = logoPath && fs.existsSync(logoPath);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
@@ -976,7 +973,7 @@ const generateLedgerPDF = async (statements, options = {}) => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    let y = drawCompanyHeader(doc, settings, logoPath, logoExists);
+    let y = drawCompanyHeader(doc, settings, logoBuffer);
 
     // Title
     const title = type === 'debtors'

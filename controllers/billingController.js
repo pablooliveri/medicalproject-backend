@@ -4,6 +4,7 @@ const MonthlyStatement = require('../models/MonthlyStatement');
 const Payment = require('../models/Payment');
 const Resident = require('../models/Resident');
 const { generateStatementPDF, generateAllStatementsPDF, generateLedgerPDF, FULL_MONTH_NAMES_ES } = require('../utils/pdfGenerator');
+const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
@@ -111,7 +112,11 @@ const createExpense = async (req, res) => {
       return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado. Desbloquealo para agregar gastos.' });
     }
 
-    const photo = req.file ? `/uploads/expenses/${req.file.filename}` : null;
+    let photo = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'medical/expenses');
+      photo = result.secure_url;
+    }
 
     const expense = await Expense.create({
       resident: req.params.residentId,
@@ -147,7 +152,11 @@ const updateExpense = async (req, res) => {
     if (unitPrice !== undefined) expense.unitPrice = Number(unitPrice);
     if (quantity !== undefined) expense.quantity = Number(quantity);
     if (notes !== undefined) expense.notes = notes;
-    if (req.file) expense.photo = `/uploads/expenses/${req.file.filename}`;
+    if (req.file) {
+      if (expense.photo) await deleteFromCloudinary(getPublicIdFromUrl(expense.photo));
+      const result = await uploadToCloudinary(req.file.buffer, 'medical/expenses');
+      expense.photo = result.secure_url;
+    }
 
     await expense.save();
     await recalculateStatement(expense.resident, expense.month, expense.year);
@@ -171,10 +180,7 @@ const deleteExpense = async (req, res) => {
     const { resident, month, year } = expense;
 
     if (expense.photo) {
-      const fs = require('fs');
-      const path = require('path');
-      const photoPath = path.join(__dirname, '..', expense.photo);
-      if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
+      await deleteFromCloudinary(getPublicIdFromUrl(expense.photo));
     }
 
     await Expense.findByIdAndDelete(req.params.expenseId);

@@ -1,6 +1,5 @@
 const Settings = require('../models/Settings');
-const path = require('path');
-const fs = require('fs');
+const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
 
 // GET /api/settings
 const getSettings = async (req, res) => {
@@ -42,24 +41,24 @@ const updateSettings = async (req, res) => {
 // POST /api/settings/logo
 const uploadLogo = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-    }
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
 
     let settings = await Settings.findOne();
-    if (!settings) {
-      settings = await Settings.create({});
-    }
+    if (!settings) settings = await Settings.create({});
 
-    // Remove old logo if exists
+    // Delete old logo from Cloudinary
     if (settings.logo) {
-      const oldPath = path.join(__dirname, '..', settings.logo);
-      if (fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
-      }
+      await deleteFromCloudinary(getPublicIdFromUrl(settings.logo));
     }
 
-    settings.logo = `/uploads/logo/${req.file.filename}`;
+    // Upload to Cloudinary (fixed public_id so it overwrites)
+    const result = await uploadToCloudinary(req.file.buffer, 'medical/logo', {
+      public_id: 'company-logo',
+      overwrite: true,
+      invalidate: true
+    });
+
+    settings.logo = result.secure_url;
     await settings.save();
 
     res.json(settings);
@@ -72,14 +71,9 @@ const uploadLogo = async (req, res) => {
 const removeLogo = async (req, res) => {
   try {
     let settings = await Settings.findOne();
-    if (!settings || !settings.logo) {
-      return res.status(404).json({ message: 'No logo found' });
-    }
+    if (!settings || !settings.logo) return res.status(404).json({ message: 'No logo found' });
 
-    const logoPath = path.join(__dirname, '..', settings.logo);
-    if (fs.existsSync(logoPath)) {
-      fs.unlinkSync(logoPath);
-    }
+    await deleteFromCloudinary(getPublicIdFromUrl(settings.logo));
 
     settings.logo = null;
     await settings.save();

@@ -2,6 +2,7 @@ const Delivery = require('../models/Delivery');
 const ResidentMedication = require('../models/ResidentMedication');
 const StockMovement = require('../models/StockMovement');
 const { checkLowStock } = require('../utils/notificationChecker');
+const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
 
 // GET /api/deliveries
 const getDeliveries = async (req, res) => {
@@ -50,8 +51,14 @@ const createDelivery = async (req, res) => {
       items = JSON.parse(items);
     }
 
-    // Handle photo uploads
-    const photos = req.files ? req.files.map(f => `/uploads/deliveries/${f.filename}`) : [];
+    // Handle photo uploads to Cloudinary
+    const photos = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const result = await uploadToCloudinary(file.buffer, 'medical/deliveries');
+        photos.push(result.secure_url);
+      }
+    }
 
     // Create delivery
     const delivery = await Delivery.create({
@@ -190,20 +197,21 @@ const updateDelivery = async (req, res) => {
       existingPhotos = delivery.photos;
     }
 
-    // Delete removed photo files from disk
-    const fs = require('fs');
-    const path = require('path');
+    // Delete removed photos from Cloudinary
     for (const oldPhoto of delivery.photos) {
       if (!existingPhotos.includes(oldPhoto)) {
-        const photoPath = path.join(__dirname, '..', oldPhoto);
-        if (fs.existsSync(photoPath)) {
-          fs.unlinkSync(photoPath);
-        }
+        await deleteFromCloudinary(getPublicIdFromUrl(oldPhoto));
       }
     }
 
-    // Add any newly uploaded photos
-    const uploadedPhotos = req.files ? req.files.map(f => `/uploads/deliveries/${f.filename}`) : [];
+    // Upload newly added photos to Cloudinary
+    const uploadedPhotos = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const result = await uploadToCloudinary(file.buffer, 'medical/deliveries');
+        uploadedPhotos.push(result.secure_url);
+      }
+    }
     const photos = [...existingPhotos, ...uploadedPhotos];
 
     delivery.deliveredBy = deliveredBy || delivery.deliveredBy;
@@ -256,14 +264,9 @@ const deleteDelivery = async (req, res) => {
       }
     }
 
-    // Delete photo files
-    const fs = require('fs');
-    const path = require('path');
+    // Delete photos from Cloudinary
     for (const photo of delivery.photos) {
-      const photoPath = path.join(__dirname, '..', photo);
-      if (fs.existsSync(photoPath)) {
-        fs.unlinkSync(photoPath);
-      }
+      await deleteFromCloudinary(getPublicIdFromUrl(photo));
     }
 
     await Delivery.findByIdAndDelete(req.params.id);
