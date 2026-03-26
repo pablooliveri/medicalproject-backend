@@ -15,7 +15,7 @@ const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require
 const recalculateStatement = async (residentId, month, year) => {
   // Sum all expenses for this resident/month/year
   const expenses = await Expense.find({ resident: residentId, month, year });
-  const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
 
   // Always get current config to use latest monthlyFee
   const config = await BillingConfig.findOne({ resident: residentId });
@@ -57,7 +57,14 @@ const getBillingConfig = async (req, res) => {
   try {
     let config = await BillingConfig.findOne({ resident: req.params.residentId });
     if (!config) {
-      config = { resident: req.params.residentId, monthlyFee: 0, adjustmentPercentage: 0, adjustmentMonths: [], notes: '' };
+      config = await BillingConfig.create({
+        resident: req.params.residentId,
+        monthlyFee: 0,
+        adjustmentPercentage: 0,
+        adjustmentMonths: [],
+        notes: '',
+        recurringExpenses: []
+      });
     }
     res.json(config);
   } catch (error) {
@@ -69,6 +76,17 @@ const getBillingConfig = async (req, res) => {
 const upsertBillingConfig = async (req, res) => {
   try {
     const { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, recurringExpenses } = req.body;
+
+    if (monthlyFee !== undefined && monthlyFee < 0) {
+      return res.status(400).json({ message: 'Monthly fee cannot be negative' });
+    }
+    if (adjustmentPercentage !== undefined && (adjustmentPercentage < 0 || adjustmentPercentage > 100)) {
+      return res.status(400).json({ message: 'Adjustment percentage must be between 0 and 100' });
+    }
+    if (adjustmentMonths && !adjustmentMonths.every(m => m >= 1 && m <= 12)) {
+      return res.status(400).json({ message: 'Invalid adjustment months' });
+    }
+
     const config = await BillingConfig.findOneAndUpdate(
       { resident: req.params.residentId },
       { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, ...(recurringExpenses !== undefined ? { recurringExpenses } : {}) },
@@ -107,6 +125,19 @@ const isMonthLocked = async (residentId, month, year) => {
 const createExpense = async (req, res) => {
   try {
     const { concept, unitPrice, quantity, month, year, notes } = req.body;
+
+    if (!concept || !concept.trim()) {
+      return res.status(400).json({ message: 'Concept is required' });
+    }
+    if (unitPrice === undefined || Number(unitPrice) < 0) {
+      return res.status(400).json({ message: 'Unit price must be a non-negative number' });
+    }
+    if (quantity !== undefined && Number(quantity) <= 0) {
+      return res.status(400).json({ message: 'Quantity must be greater than zero' });
+    }
+    if (!month || Number(month) < 1 || Number(month) > 12) {
+      return res.status(400).json({ message: 'Month must be between 1 and 12' });
+    }
 
     if (await isMonthLocked(req.params.residentId, Number(month), Number(year))) {
       return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado. Desbloquealo para agregar gastos.' });
@@ -221,8 +252,17 @@ const getStatement = async (req, res) => {
     if (!statement) {
       const config = await BillingConfig.findOne({ resident: residentId });
       const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
-      const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-      const monthlyFee = config ? config.monthlyFee : 0;
+      const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
+      let monthlyFee = config ? config.monthlyFee : 0;
+
+      // Include adjustment in preview so it matches what createStatement will produce
+      const adjMonths = config?.adjustmentMonths || [];
+      const pct = config?.adjustmentPercentage || 0;
+      const wouldAdjust = adjMonths.includes(Number(month)) && pct > 0;
+      if (wouldAdjust) {
+        monthlyFee = Math.round(monthlyFee * (1 + pct / 100));
+      }
+
       return res.json({
         resident: residentId,
         month: Number(month),
@@ -234,6 +274,8 @@ const getStatement = async (req, res) => {
         balance: monthlyFee + totalExpenses,
         status: 'pending',
         adjustmentApplied: false,
+        pendingAdjustment: wouldAdjust,
+        adjustmentPercentage: wouldAdjust ? pct : 0,
         isPreview: true
       });
     }
@@ -261,13 +303,15 @@ const createStatement = async (req, res) => {
       adjustmentApplied = true;
 
       // Update the config's monthly fee for future months
-      config.monthlyFee = monthlyFee;
-      await config.save();
+      if (config) {
+        config.monthlyFee = monthlyFee;
+        await config.save();
+      }
     }
 
     // Upsert statement
     const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
-    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+    const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
     const totalAmount = monthlyFee + totalExpenses;
 
     const statement = await MonthlyStatement.findOneAndUpdate(
@@ -330,7 +374,7 @@ const loadRecurringExpenses = async (req, res) => {
     }
 
     const config = await BillingConfig.findOne({ resident: residentId });
-    if (!config || !config.recurringExpenses.length) {
+    if (!config || !config.recurringExpenses || !config.recurringExpenses.length) {
       return res.json({ created: 0, message: 'No recurring expenses configured' });
     }
 
@@ -524,7 +568,7 @@ const getAllConfigs = async (req, res) => {
     const residents = await Resident.find({ isActive: true }).sort({ lastName: 1, firstName: 1 });
     const configs = await BillingConfig.find({});
     const configMap = {};
-    configs.forEach(c => { configMap[c.resident.toString()] = c; });
+    configs.forEach(c => { if (c.resident) configMap[c.resident.toString()] = c; });
 
     const result = residents.map(r => ({
       resident: r,
@@ -559,8 +603,21 @@ const generateStatementPDFRoute = async (req, res) => {
     });
 
     if (!statement) {
-      // Save the statement so it appears in debtors/summary queries
-      statement = await recalculateStatement(residentId, Number(month), Number(year));
+      // Generate a preview without saving to DB
+      const config = await BillingConfig.findOne({ resident: residentId });
+      const previewExpenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+      const totalExpenses = previewExpenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
+      const monthlyFee = config ? config.monthlyFee : 0;
+      statement = {
+        month: Number(month),
+        year: Number(year),
+        monthlyFee,
+        totalExpenses,
+        totalAmount: monthlyFee + totalExpenses,
+        amountPaid: 0,
+        balance: monthlyFee + totalExpenses,
+        status: 'pending'
+      };
     }
 
     const expenses = await Expense.find({
@@ -617,7 +674,7 @@ const generateAllStatementsPDFRoute = async (req, res) => {
 
       if (!stmtData) {
         const expenses = await Expense.find({ resident: resident._id, month: Number(month), year: Number(year) });
-        const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+        const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
         const monthlyFee = config ? config.monthlyFee : 0;
         stmtData = {
           month: Number(month),
