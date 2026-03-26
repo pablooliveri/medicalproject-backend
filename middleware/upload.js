@@ -18,7 +18,7 @@ const uploadDeliveryPhotos = multer({
   storage: memoryStorage,
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }
-}).array('photos', 10);
+}).array('photos', 1);
 
 const uploadLogo = multer({
   storage: memoryStorage,
