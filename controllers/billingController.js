@@ -485,20 +485,41 @@ const getDebtors = async (req, res) => {
 const getSummary = async (req, res) => {
   try {
     const { sucursal, month, year } = req.query;
-    const query = {};
-    if (month) query.month = Number(month);
-    if (year) query.year = Number(year);
 
-    // Count active residents (optionally filtered by sucursal)
+    // Get active residents (optionally filtered by sucursal)
     const residentQuery = { isActive: true };
     if (sucursal) residentQuery.sucursal = sucursal;
-    const activeResidentCount = await Resident.countDocuments(residentQuery);
+    const residents = await Resident.find(residentQuery).select('_id');
+    const residentIds = residents.map(r => r._id);
 
-    const statements = await MonthlyStatement.find(query).populate('resident');
+    // Get existing statements for this month/year
+    const stmtQuery = {};
+    if (month) stmtQuery.month = Number(month);
+    if (year) stmtQuery.year = Number(year);
+    const statements = await MonthlyStatement.find(stmtQuery).populate('resident');
 
     const filtered = sucursal
       ? statements.filter(s => s.resident && s.resident.sucursal === sucursal)
       : statements.filter(s => s.resident);
+
+    // Build set of residents that already have statements
+    const residentsWithStatements = new Set(filtered.map(s => s.resident._id.toString()));
+
+    // For residents WITHOUT statements, project from their billing config
+    const residentsWithoutStatements = residentIds.filter(id => !residentsWithStatements.has(id.toString()));
+    let projectedFees = 0;
+    let projectedCount = 0;
+    if (residentsWithoutStatements.length > 0 && month && year) {
+      const configs = await BillingConfig.find({ resident: { $in: residentsWithoutStatements } });
+      for (const c of configs) {
+        if (c.monthlyFee > 0) {
+          const expenses = await Expense.find({ resident: c.resident, month: Number(month), year: Number(year) });
+          const totalExp = expenses.reduce((sum, e) => sum + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
+          projectedFees += c.monthlyFee + totalExp;
+          projectedCount++;
+        }
+      }
+    }
 
     const summary = {
       totalBilled: 0,
@@ -507,7 +528,7 @@ const getSummary = async (req, res) => {
       totalPaid: 0,
       totalPending: 0,
       residentCount: filtered.length,
-      activeResidentCount,
+      activeResidentCount: residentIds.length,
       debtorCount: 0
     };
 
@@ -519,6 +540,12 @@ const getSummary = async (req, res) => {
       summary.totalPending += s.balance || 0;
       if (s.balance > 0) summary.debtorCount++;
     }
+
+    // Add projected billing from configs for residents without statements
+    summary.totalBilled += projectedFees;
+    summary.totalFees += projectedFees;
+    summary.totalPending += projectedFees;
+    summary.residentCount += projectedCount;
 
     res.json(summary);
   } catch (error) {
