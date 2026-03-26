@@ -193,18 +193,26 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
       rowY += 20;
 
       for (const photo of delivery.photos) {
-        const photoPath = path.join(__dirname, '..', photo);
-        if (fs.existsSync(photoPath)) {
-          if (rowY > 550) {
-            doc.addPage();
-            rowY = 50;
+        if (rowY > 550) {
+          doc.addPage();
+          rowY = 50;
+        }
+        try {
+          let imageData;
+          if (photo.startsWith('http')) {
+            imageData = await fetchImageBuffer(photo);
+          } else {
+            const photoPath = path.join(__dirname, '..', photo);
+            if (fs.existsSync(photoPath)) {
+              imageData = fs.readFileSync(photoPath);
+            }
           }
-          try {
-            doc.image(photoPath, 50, rowY, { width: 200 });
+          if (imageData) {
+            doc.image(imageData, 50, rowY, { width: 200 });
             rowY += 160;
-          } catch (err) {
-            // Skip invalid images
           }
+        } catch (err) {
+          console.error('Failed to load photo for PDF:', err.message);
         }
       }
     }
