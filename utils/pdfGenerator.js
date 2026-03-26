@@ -213,24 +213,43 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
       doc.font('Helvetica-Bold').fontSize(10).text('Fotos:', 50, rowY);
       rowY += 20;
 
-      const photoWidth = 200;
-      const pageBottom = 740; // leave room for footer
+      const photoWidth = 240;
+      const gap = 15;
+      const leftMargin = 50;
+      const contentWidth = 495; // A4 width minus margins
+      const pageBottom = 740;
+
+      let curX = leftMargin;
+      let rowMaxHeight = 0;
 
       for (const buf of photoBuffers) {
         try {
           const img = doc.openImage(buf);
           const displayHeight = photoWidth * (img.height / img.width);
 
+          // If photo doesn't fit horizontally, move to next row
+          if (curX + photoWidth > leftMargin + contentWidth) {
+            rowY += rowMaxHeight + gap;
+            curX = leftMargin;
+            rowMaxHeight = 0;
+          }
+
+          // If photo doesn't fit vertically, new page
           if (rowY + displayHeight > pageBottom) {
             doc.addPage();
             rowY = 50;
+            curX = leftMargin;
+            rowMaxHeight = 0;
           }
-          doc.image(img, 50, rowY, { width: photoWidth });
-          rowY += displayHeight + 15;
+
+          doc.image(img, curX, rowY, { width: photoWidth });
+          curX += photoWidth + gap;
+          rowMaxHeight = Math.max(rowMaxHeight, displayHeight);
         } catch (err) {
           console.error('Failed to embed photo in PDF:', err.message);
         }
       }
+      rowY += rowMaxHeight + gap;
     }
 
     // Footer
