@@ -17,8 +17,10 @@ const PUBLIC_URL = process.env.R2_PUBLIC_URL;
  * Upload a buffer to Cloudflare R2
  * Returns { secure_url } for compatibility with existing code
  */
+let counter = 0;
 const uploadImage = async (buffer, folder, options = {}) => {
-  const uniqueId = options.public_id || `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+  counter++;
+  const uniqueId = options.public_id || `${Date.now()}-${counter}-${crypto.randomBytes(8).toString('hex')}`;
   const key = `${folder}/${uniqueId}`;
 
   await s3.send(new PutObjectCommand({
