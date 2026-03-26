@@ -213,21 +213,19 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
       doc.font('Helvetica-Bold').fontSize(10).text('Fotos:', 50, rowY);
       rowY += 20;
 
-      const maxPhotoWidth = 400;
+      const photoWidth = 200;
       const pageBottom = 740; // leave room for footer
 
       for (const buf of photoBuffers) {
         try {
           const img = doc.openImage(buf);
-          const ratio = img.height / img.width;
-          const displayWidth = Math.min(img.width, maxPhotoWidth);
-          const displayHeight = displayWidth * ratio;
+          const displayHeight = photoWidth * (img.height / img.width);
 
           if (rowY + displayHeight > pageBottom) {
             doc.addPage();
             rowY = 50;
           }
-          doc.image(img, 50, rowY, { width: displayWidth });
+          doc.image(img, 50, rowY, { width: photoWidth });
           rowY += displayHeight + 15;
         } catch (err) {
           console.error('Failed to embed photo in PDF:', err.message);
