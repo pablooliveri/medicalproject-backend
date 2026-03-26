@@ -7,7 +7,7 @@ const calculateCoverageDate = (currentStock, schedule) => {
     (schedule.breakfast || 0) +
     (schedule.lunch || 0) +
     (schedule.snack || 0) +
-    (schedule.dinner || 0);
+    (schedule.dinner || 0);  
 
   if (dailyConsumption === 0) return null;
 
