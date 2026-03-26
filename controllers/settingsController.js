@@ -1,5 +1,5 @@
 const Settings = require('../models/Settings');
-const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
+const { uploadImage, deleteImage, getKeyFromUrl } = require('../utils/storage');
 
 // GET /api/settings
 const getSettings = async (req, res) => {
@@ -46,16 +46,15 @@ const uploadLogo = async (req, res) => {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
 
-    // Delete old logo from Cloudinary
+    // Delete old logo from R2
     if (settings.logo) {
-      await deleteFromCloudinary(getPublicIdFromUrl(settings.logo));
+      await deleteImage(getKeyFromUrl(settings.logo));
     }
 
-    // Upload to Cloudinary (fixed public_id so it overwrites)
-    const result = await uploadToCloudinary(req.file.buffer, 'medical/logo', {
+    // Upload to R2 (fixed public_id so it overwrites)
+    const result = await uploadImage(req.file.buffer, 'medical/logo', {
       public_id: 'company-logo',
-      overwrite: true,
-      invalidate: true
+      contentType: req.file.mimetype
     });
 
     settings.logo = result.secure_url;
@@ -73,7 +72,7 @@ const removeLogo = async (req, res) => {
     let settings = await Settings.findOne();
     if (!settings || !settings.logo) return res.status(404).json({ message: 'No logo found' });
 
-    await deleteFromCloudinary(getPublicIdFromUrl(settings.logo));
+    await deleteImage(getKeyFromUrl(settings.logo));
 
     settings.logo = null;
     await settings.save();

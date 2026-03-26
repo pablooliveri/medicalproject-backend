@@ -4,7 +4,7 @@ const MonthlyStatement = require('../models/MonthlyStatement');
 const Payment = require('../models/Payment');
 const Resident = require('../models/Resident');
 const { generateStatementPDF, generateAllStatementsPDF, generateLedgerPDF, FULL_MONTH_NAMES_ES } = require('../utils/pdfGenerator');
-const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
+const { uploadImage, deleteImage, getKeyFromUrl } = require('../utils/storage');
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ const createExpense = async (req, res) => {
 
     let photo = null;
     if (req.file) {
-      const result = await uploadToCloudinary(req.file.buffer, 'medical/expenses');
+      const result = await uploadImage(req.file.buffer, 'medical/expenses', { contentType: req.file.mimetype });
       photo = result.secure_url;
     }
 
@@ -184,8 +184,8 @@ const updateExpense = async (req, res) => {
     if (quantity !== undefined) expense.quantity = Number(quantity);
     if (notes !== undefined) expense.notes = notes;
     if (req.file) {
-      if (expense.photo) await deleteFromCloudinary(getPublicIdFromUrl(expense.photo));
-      const result = await uploadToCloudinary(req.file.buffer, 'medical/expenses');
+      if (expense.photo) await deleteImage(getKeyFromUrl(expense.photo));
+      const result = await uploadImage(req.file.buffer, 'medical/expenses', { contentType: req.file.mimetype });
       expense.photo = result.secure_url;
     }
 
@@ -211,7 +211,7 @@ const deleteExpense = async (req, res) => {
     const { resident, month, year } = expense;
 
     if (expense.photo) {
-      await deleteFromCloudinary(getPublicIdFromUrl(expense.photo));
+      await deleteImage(getKeyFromUrl(expense.photo));
     }
 
     await Expense.findByIdAndDelete(req.params.expenseId);

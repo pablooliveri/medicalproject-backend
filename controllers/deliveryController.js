@@ -2,7 +2,7 @@ const Delivery = require('../models/Delivery');
 const ResidentMedication = require('../models/ResidentMedication');
 const StockMovement = require('../models/StockMovement');
 const { checkLowStock } = require('../utils/notificationChecker');
-const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../utils/cloudinary');
+const { uploadImage, deleteImage, getKeyFromUrl } = require('../utils/storage');
 
 // GET /api/deliveries
 const getDeliveries = async (req, res) => {
@@ -55,7 +55,7 @@ const createDelivery = async (req, res) => {
     const photos = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
-        const result = await uploadToCloudinary(file.buffer, 'medical/deliveries');
+        const result = await uploadImage(file.buffer, 'medical/deliveries', { contentType: file.mimetype });
         photos.push(result.secure_url);
       }
     }
@@ -200,7 +200,7 @@ const updateDelivery = async (req, res) => {
     // Delete removed photos from Cloudinary
     for (const oldPhoto of delivery.photos) {
       if (!existingPhotos.includes(oldPhoto)) {
-        await deleteFromCloudinary(getPublicIdFromUrl(oldPhoto));
+        await deleteImage(getKeyFromUrl(oldPhoto));
       }
     }
 
@@ -208,7 +208,7 @@ const updateDelivery = async (req, res) => {
     const uploadedPhotos = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
-        const result = await uploadToCloudinary(file.buffer, 'medical/deliveries');
+        const result = await uploadImage(file.buffer, 'medical/deliveries', { contentType: file.mimetype });
         uploadedPhotos.push(result.secure_url);
       }
     }
@@ -266,7 +266,7 @@ const deleteDelivery = async (req, res) => {
 
     // Delete photos from Cloudinary
     for (const photo of delivery.photos) {
-      await deleteFromCloudinary(getPublicIdFromUrl(photo));
+      await deleteImage(getKeyFromUrl(photo));
     }
 
     await Delivery.findByIdAndDelete(req.params.id);

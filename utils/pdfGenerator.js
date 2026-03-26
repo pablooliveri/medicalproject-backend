@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 const Settings = require('../models/Settings');
-const { fetchImageBuffer } = require('./cloudinary');
+const { fetchImageBuffer } = require('./storage');
 
 const MONTH_NAMES_ES = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
