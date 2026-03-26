@@ -55,6 +55,27 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
   const settings = await Settings.findOne();
   const logoBuffer = await loadLogoBuffer(settings);
 
+  // Pre-fetch photo buffers before entering the Promise
+  const photoBuffers = [];
+  if (delivery.photos && delivery.photos.length > 0) {
+    for (const photo of delivery.photos) {
+      try {
+        let buf;
+        if (photo.startsWith('http')) {
+          buf = await fetchImageBuffer(photo);
+        } else {
+          const photoPath = path.join(__dirname, '..', photo);
+          if (fs.existsSync(photoPath)) {
+            buf = fs.readFileSync(photoPath);
+          }
+        }
+        if (buf) photoBuffers.push(buf);
+      } catch (err) {
+        console.error('Failed to fetch photo for PDF:', err.message);
+      }
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
     const chunks = [];
@@ -183,7 +204,7 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
     }
 
     // Photos
-    if (delivery.photos && delivery.photos.length > 0) {
+    if (photoBuffers.length > 0) {
       rowY += 15;
       if (rowY > 650) {
         doc.addPage();
@@ -192,27 +213,16 @@ const generateDeliveryPDF = async (delivery, resident, items) => {
       doc.font('Helvetica-Bold').fontSize(10).text('Fotos:', 50, rowY);
       rowY += 20;
 
-      for (const photo of delivery.photos) {
+      for (const buf of photoBuffers) {
         if (rowY > 550) {
           doc.addPage();
           rowY = 50;
         }
         try {
-          let imageData;
-          if (photo.startsWith('http')) {
-            imageData = await fetchImageBuffer(photo);
-          } else {
-            const photoPath = path.join(__dirname, '..', photo);
-            if (fs.existsSync(photoPath)) {
-              imageData = fs.readFileSync(photoPath);
-            }
-          }
-          if (imageData) {
-            doc.image(imageData, 50, rowY, { width: 200 });
-            rowY += 160;
-          }
+          doc.image(buf, 50, rowY, { width: 200 });
+          rowY += 160;
         } catch (err) {
-          console.error('Failed to load photo for PDF:', err.message);
+          console.error('Failed to embed photo in PDF:', err.message);
         }
       }
     }
