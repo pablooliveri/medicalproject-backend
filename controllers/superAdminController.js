@@ -200,9 +200,10 @@ const updateStatus = async (req, res) => {
 const updateSubscription = async (req, res) => {
   try {
     const { subscriptionStatus, subscriptionStartDate, subscriptionEndDate } = req.body;
+    const isActive = subscriptionStatus === 'active';
     const institution = await Institution.findByIdAndUpdate(
       req.params.id,
-      { subscriptionStatus, subscriptionStartDate, subscriptionEndDate },
+      { subscriptionStatus, subscriptionStartDate, subscriptionEndDate, isActive },
       { returnDocument: 'after' }
     );
     if (!institution) {
