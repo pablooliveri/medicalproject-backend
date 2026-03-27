@@ -199,7 +199,11 @@ const updateStatus = async (req, res) => {
 // PUT /api/superadmin/institutions/:id/subscription
 const updateSubscription = async (req, res) => {
   try {
-    const { subscriptionStatus, subscriptionStartDate, subscriptionEndDate } = req.body;
+    let { subscriptionStatus, subscriptionStartDate, subscriptionEndDate } = req.body;
+    // Auto-activate if end date is in the future and status is expired
+    if (subscriptionStatus === 'expired' && subscriptionEndDate && new Date(subscriptionEndDate) > new Date()) {
+      subscriptionStatus = 'active';
+    }
     const isActive = subscriptionStatus === 'active';
     const institution = await Institution.findByIdAndUpdate(
       req.params.id,
