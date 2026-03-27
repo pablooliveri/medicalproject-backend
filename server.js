@@ -17,7 +17,8 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://medicalmanegement.netlify.app'
+    'https://medicalmanegement.netlify.app',
+    'https://project-jhz2u-git-main-medical3.vercel.app'
   ],
   credentials: true
 }));
