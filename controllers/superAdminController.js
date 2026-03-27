@@ -226,7 +226,7 @@ const resetPassword = async (req, res) => {
 // PUT /api/superadmin/institutions/:id/update-user
 const updateUser = async (req, res) => {
   try {
-    const { userId, username } = req.body;
+    const { userId, username, newPassword } = req.body;
     const user = await User.findOne({ _id: userId, institution: req.params.id });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -240,6 +240,9 @@ const updateUser = async (req, res) => {
         return res.status(400).json({ message: 'Username already taken' });
       }
       user.username = username;
+    }
+    if (newPassword) {
+      user.password = newPassword;
     }
     await user.save();
     res.json({ message: 'User updated successfully' });
