@@ -9,8 +9,9 @@ const {
   getResidentWithMedications
 } = require('../controllers/residentController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.route('/').get(getResidents).post(createResident);
 router.route('/:id').get(getResident).put(updateResident).delete(deleteResident);

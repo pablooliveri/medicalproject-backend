@@ -7,7 +7,7 @@ const getResidentHistory = async (req, res) => {
     const { residentId } = req.params;
     const { month, year } = req.query;
 
-    const query = { resident: residentId };
+    const query = { resident: residentId, ...req.tenantFilter };
 
     if (month && year) {
       const startDate = new Date(year, month - 1, 1);
@@ -33,7 +33,7 @@ const getAvailableMonths = async (req, res) => {
     const { residentId } = req.params;
 
     // Get all history records for this resident
-    const history = await MedicationHistory.find({ resident: residentId })
+    const history = await MedicationHistory.find({ resident: residentId, ...req.tenantFilter })
       .select('date')
       .sort({ date: -1 });
 
@@ -88,6 +88,7 @@ const getMonthlySnapshot = async (req, res) => {
     // Get all resident medications that were active during this month
     const allMeds = await ResidentMedication.find({
       resident: residentId,
+      ...req.tenantFilter,
       startDate: { $lte: endOfMonth },
       $or: [
         { endDate: null },
@@ -99,6 +100,7 @@ const getMonthlySnapshot = async (req, res) => {
     const startOfMonth = new Date(year, month - 1, 1);
     const changes = await MedicationHistory.find({
       resident: residentId,
+      ...req.tenantFilter,
       date: { $gte: startOfMonth, $lte: endOfMonth }
     }).populate('medication').sort({ date: -1 });
 

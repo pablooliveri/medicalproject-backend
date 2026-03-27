@@ -55,10 +55,11 @@ const recalculateStatement = async (residentId, month, year) => {
 // GET /api/billing/config/:residentId
 const getBillingConfig = async (req, res) => {
   try {
-    let config = await BillingConfig.findOne({ resident: req.params.residentId });
+    let config = await BillingConfig.findOne({ resident: req.params.residentId, ...req.tenantFilter });
     if (!config) {
       config = await BillingConfig.create({
         resident: req.params.residentId,
+        institution: req.user.institution,
         monthlyFee: 0,
         adjustmentPercentage: 0,
         adjustmentMonths: [],
@@ -88,9 +89,9 @@ const upsertBillingConfig = async (req, res) => {
     }
 
     const config = await BillingConfig.findOneAndUpdate(
-      { resident: req.params.residentId },
-      { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, ...(recurringExpenses !== undefined ? { recurringExpenses } : {}) },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { resident: req.params.residentId, ...req.tenantFilter },
+      { monthlyFee, adjustmentPercentage, adjustmentMonths, notes, institution: req.user.institution, ...(recurringExpenses !== undefined ? { recurringExpenses } : {}) },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     res.json(config);
   } catch (error) {
@@ -104,7 +105,7 @@ const upsertBillingConfig = async (req, res) => {
 const getExpenses = async (req, res) => {
   try {
     const { month, year } = req.query;
-    const query = { resident: req.params.residentId };
+    const query = { resident: req.params.residentId, ...req.tenantFilter };
     if (month) query.month = Number(month);
     if (year) query.year = Number(year);
 
@@ -151,6 +152,7 @@ const createExpense = async (req, res) => {
 
     const expense = await Expense.create({
       resident: req.params.residentId,
+      institution: req.user.institution,
       concept,
       unitPrice: Number(unitPrice),
       quantity: Number(quantity) || 1,
@@ -171,7 +173,7 @@ const createExpense = async (req, res) => {
 // PUT /api/billing/expenses/:expenseId
 const updateExpense = async (req, res) => {
   try {
-    const expense = await Expense.findById(req.params.expenseId);
+    const expense = await Expense.findOne({ _id: req.params.expenseId, ...req.tenantFilter });
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
     if (await isMonthLocked(expense.resident, expense.month, expense.year)) {
@@ -201,7 +203,7 @@ const updateExpense = async (req, res) => {
 // DELETE /api/billing/expenses/:expenseId
 const deleteExpense = async (req, res) => {
   try {
-    const expense = await Expense.findById(req.params.expenseId);
+    const expense = await Expense.findOne({ _id: req.params.expenseId, ...req.tenantFilter });
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
     if (await isMonthLocked(expense.resident, expense.month, expense.year)) {
@@ -228,7 +230,7 @@ const deleteExpense = async (req, res) => {
 // GET /api/billing/statements/:residentId  ?year=
 const getStatements = async (req, res) => {
   try {
-    const query = { resident: req.params.residentId };
+    const query = { resident: req.params.residentId, ...req.tenantFilter };
     if (req.query.year) query.year = Number(req.query.year);
 
     const statements = await MonthlyStatement.find(query).sort({ year: -1, month: -1 });
@@ -244,14 +246,15 @@ const getStatement = async (req, res) => {
     const { residentId, month, year } = req.params;
     let statement = await MonthlyStatement.findOne({
       resident: residentId,
+      ...req.tenantFilter,
       month: Number(month),
       year: Number(year)
     });
 
     // If no statement yet, return a computed preview
     if (!statement) {
-      const config = await BillingConfig.findOne({ resident: residentId });
-      const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+      const config = await BillingConfig.findOne({ resident: residentId, ...req.tenantFilter });
+      const expenses = await Expense.find({ resident: residentId, ...req.tenantFilter, month: Number(month), year: Number(year) });
       const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
       let monthlyFee = config ? config.monthlyFee : 0;
 
@@ -292,7 +295,7 @@ const createStatement = async (req, res) => {
     const { month, year, applyAdjustment, adjustmentPercentage: bodyPercentage } = req.body;
     const residentId = req.params.residentId;
 
-    const config = await BillingConfig.findOne({ resident: residentId });
+    const config = await BillingConfig.findOne({ resident: residentId, ...req.tenantFilter });
     let monthlyFee = config ? config.monthlyFee : 0;
     let adjustmentApplied = false;
 
@@ -310,14 +313,14 @@ const createStatement = async (req, res) => {
     }
 
     // Upsert statement
-    const expenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+    const expenses = await Expense.find({ resident: residentId, ...req.tenantFilter, month: Number(month), year: Number(year) });
     const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
     const totalAmount = monthlyFee + totalExpenses;
 
     const statement = await MonthlyStatement.findOneAndUpdate(
-      { resident: residentId, month: Number(month), year: Number(year) },
-      { monthlyFee, totalExpenses, totalAmount, adjustmentApplied, balance: totalAmount, status: 'pending' },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { resident: residentId, ...req.tenantFilter, month: Number(month), year: Number(year) },
+      { monthlyFee, totalExpenses, totalAmount, adjustmentApplied, balance: totalAmount, status: 'pending', institution: req.user.institution },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
 
     res.status(201).json(statement);
@@ -329,7 +332,7 @@ const createStatement = async (req, res) => {
 // PUT /api/billing/statements/:statementId  — recalculate
 const updateStatement = async (req, res) => {
   try {
-    const statement = await MonthlyStatement.findById(req.params.statementId);
+    const statement = await MonthlyStatement.findOne({ _id: req.params.statementId, ...req.tenantFilter });
     if (!statement) return res.status(404).json({ message: 'Statement not found' });
 
     if (req.body.notes !== undefined) statement.notes = req.body.notes;
@@ -349,7 +352,7 @@ const updateStatement = async (req, res) => {
 // DELETE /api/billing/statements/:statementId
 const deleteStatement = async (req, res) => {
   try {
-    const statement = await MonthlyStatement.findById(req.params.statementId);
+    const statement = await MonthlyStatement.findOne({ _id: req.params.statementId, ...req.tenantFilter });
     if (!statement) return res.status(404).json({ message: 'Statement not found' });
 
     // Delete all payments and expenses for this statement's month/year/resident
@@ -373,17 +376,18 @@ const loadRecurringExpenses = async (req, res) => {
       return res.status(400).json({ message: 'El estado de cuenta de este mes está cerrado.' });
     }
 
-    const config = await BillingConfig.findOne({ resident: residentId });
+    const config = await BillingConfig.findOne({ resident: residentId, ...req.tenantFilter });
     if (!config || !config.recurringExpenses || !config.recurringExpenses.length) {
       return res.json({ created: 0, message: 'No recurring expenses configured' });
     }
 
     let created = 0;
     for (const rec of config.recurringExpenses) {
-      const exists = await Expense.findOne({ resident: residentId, month: Number(month), year: Number(year), concept: rec.concept });
+      const exists = await Expense.findOne({ resident: residentId, ...req.tenantFilter, month: Number(month), year: Number(year), concept: rec.concept });
       if (!exists) {
         await Expense.create({
           resident: residentId,
+          institution: req.user.institution,
           concept: rec.concept,
           unitPrice: rec.unitPrice,
           quantity: rec.quantity,
@@ -406,7 +410,7 @@ const loadRecurringExpenses = async (req, res) => {
 // GET /api/billing/payments/:statementId
 const getPayments = async (req, res) => {
   try {
-    const payments = await Payment.find({ statement: req.params.statementId }).sort({ paymentDate: -1 });
+    const payments = await Payment.find({ statement: req.params.statementId, ...req.tenantFilter }).sort({ paymentDate: -1 });
     res.json(payments);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -416,13 +420,14 @@ const getPayments = async (req, res) => {
 // POST /api/billing/payments/:statementId
 const createPayment = async (req, res) => {
   try {
-    const statement = await MonthlyStatement.findById(req.params.statementId);
+    const statement = await MonthlyStatement.findOne({ _id: req.params.statementId, ...req.tenantFilter });
     if (!statement) return res.status(404).json({ message: 'Statement not found' });
 
     const { amount, paymentDate, method, notes } = req.body;
     const payment = await Payment.create({
       statement: statement._id,
       resident: statement.resident,
+      institution: req.user.institution,
       amount: Number(amount),
       paymentDate: paymentDate || new Date(),
       method: method || 'cash',
@@ -440,10 +445,10 @@ const createPayment = async (req, res) => {
 // DELETE /api/billing/payments/:paymentId
 const deletePayment = async (req, res) => {
   try {
-    const payment = await Payment.findById(req.params.paymentId);
+    const payment = await Payment.findOne({ _id: req.params.paymentId, ...req.tenantFilter });
     if (!payment) return res.status(404).json({ message: 'Payment not found' });
 
-    const statement = await MonthlyStatement.findById(payment.statement);
+    const statement = await MonthlyStatement.findOne({ _id: payment.statement, ...req.tenantFilter });
     await Payment.findByIdAndDelete(req.params.paymentId);
 
     if (statement) {
@@ -462,7 +467,7 @@ const deletePayment = async (req, res) => {
 const getDebtors = async (req, res) => {
   try {
     const { sucursal, month, year } = req.query;
-    const query = { balance: { $gt: 0 } };
+    const query = { balance: { $gt: 0 }, ...req.tenantFilter };
     if (month) query.month = Number(month);
     if (year) query.year = Number(year);
 
@@ -487,13 +492,13 @@ const getSummary = async (req, res) => {
     const { sucursal, month, year } = req.query;
 
     // Get active residents (optionally filtered by sucursal)
-    const residentQuery = { isActive: true };
+    const residentQuery = { isActive: true, ...req.tenantFilter };
     if (sucursal) residentQuery.sucursal = sucursal;
     const residents = await Resident.find(residentQuery).select('_id');
     const residentIds = residents.map(r => r._id);
 
     // Get existing statements for this month/year
-    const stmtQuery = {};
+    const stmtQuery = { ...req.tenantFilter };
     if (month) stmtQuery.month = Number(month);
     if (year) stmtQuery.year = Number(year);
     const statements = await MonthlyStatement.find(stmtQuery).populate('resident');
@@ -510,10 +515,10 @@ const getSummary = async (req, res) => {
     let projectedFees = 0;
     let projectedCount = 0;
     if (residentsWithoutStatements.length > 0 && month && year) {
-      const configs = await BillingConfig.find({ resident: { $in: residentsWithoutStatements } });
+      const configs = await BillingConfig.find({ resident: { $in: residentsWithoutStatements }, ...req.tenantFilter });
       for (const c of configs) {
         if (c.monthlyFee > 0) {
-          const expenses = await Expense.find({ resident: c.resident, month: Number(month), year: Number(year) });
+          const expenses = await Expense.find({ resident: c.resident, ...req.tenantFilter, month: Number(month), year: Number(year) });
           const totalExp = expenses.reduce((sum, e) => sum + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
           projectedFees += c.monthlyFee + totalExp;
           projectedCount++;
@@ -557,7 +562,7 @@ const getSummary = async (req, res) => {
 const getStatementsMonthly = async (req, res) => {
   try {
     const { sucursal, month, year } = req.query;
-    const query = {};
+    const query = { ...req.tenantFilter };
     if (month) query.month = Number(month);
     if (year) query.year = Number(year);
 
@@ -579,7 +584,7 @@ const getStatementsMonthly = async (req, res) => {
 const getAdjustmentAlerts = async (req, res) => {
   try {
     const currentMonth = new Date().getMonth() + 1;
-    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth })
+    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth, ...req.tenantFilter })
       .populate('resident');
 
     const alerts = configs.filter(c => c.resident && c.resident.isActive);
@@ -592,8 +597,8 @@ const getAdjustmentAlerts = async (req, res) => {
 // GET /api/billing/configs  — all residents with their billing config
 const getAllConfigs = async (req, res) => {
   try {
-    const residents = await Resident.find({ isActive: true }).sort({ lastName: 1, firstName: 1 });
-    const configs = await BillingConfig.find({});
+    const residents = await Resident.find({ isActive: true, ...req.tenantFilter }).sort({ lastName: 1, firstName: 1 });
+    const configs = await BillingConfig.find({ ...req.tenantFilter });
     const configMap = {};
     configs.forEach(c => { if (c.resident) configMap[c.resident.toString()] = c; });
 
@@ -620,19 +625,20 @@ const generateStatementPDFRoute = async (req, res) => {
   try {
     const { residentId, month, year } = req.params;
 
-    const resident = await Resident.findById(residentId);
+    const resident = await Resident.findOne({ _id: residentId, ...req.tenantFilter });
     if (!resident) return res.status(404).json({ message: 'Resident not found' });
 
     let statement = await MonthlyStatement.findOne({
       resident: residentId,
+      ...req.tenantFilter,
       month: Number(month),
       year: Number(year)
     });
 
     if (!statement) {
       // Generate a preview without saving to DB
-      const config = await BillingConfig.findOne({ resident: residentId });
-      const previewExpenses = await Expense.find({ resident: residentId, month: Number(month), year: Number(year) });
+      const config = await BillingConfig.findOne({ resident: residentId, ...req.tenantFilter });
+      const previewExpenses = await Expense.find({ resident: residentId, ...req.tenantFilter, month: Number(month), year: Number(year) });
       const totalExpenses = previewExpenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
       const monthlyFee = config ? config.monthlyFee : 0;
       statement = {
@@ -649,12 +655,13 @@ const generateStatementPDFRoute = async (req, res) => {
 
     const expenses = await Expense.find({
       resident: residentId,
+      ...req.tenantFilter,
       month: Number(month),
       year: Number(year)
     }).sort({ createdAt: 1 });
 
     const payments = statement._id
-      ? await Payment.find({ statement: statement._id }).sort({ paymentDate: 1 })
+      ? await Payment.find({ statement: statement._id, ...req.tenantFilter }).sort({ paymentDate: 1 })
       : [];
 
     const pdfBuffer = await generateStatementPDF(resident, statement, expenses, payments);
@@ -680,7 +687,7 @@ const generateAllStatementsPDFRoute = async (req, res) => {
     const { month, year } = req.params;
     const { sucursal } = req.query;
 
-    const residentFilter = { isActive: true };
+    const residentFilter = { isActive: true, ...req.tenantFilter };
     if (sucursal) residentFilter.sucursal = sucursal;
 
     const residents = await Resident.find(residentFilter).sort({ lastName: 1, firstName: 1 });
@@ -692,15 +699,16 @@ const generateAllStatementsPDFRoute = async (req, res) => {
     for (const resident of residents) {
       const statement = await MonthlyStatement.findOne({
         resident: resident._id,
+        ...req.tenantFilter,
         month: Number(month),
         year: Number(year)
       });
 
-      const config = await BillingConfig.findOne({ resident: resident._id });
+      const config = await BillingConfig.findOne({ resident: resident._id, ...req.tenantFilter });
       let stmtData = statement;
 
       if (!stmtData) {
-        const expenses = await Expense.find({ resident: resident._id, month: Number(month), year: Number(year) });
+        const expenses = await Expense.find({ resident: resident._id, ...req.tenantFilter, month: Number(month), year: Number(year) });
         const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
         const monthlyFee = config ? config.monthlyFee : 0;
         stmtData = {
@@ -716,6 +724,7 @@ const generateAllStatementsPDFRoute = async (req, res) => {
 
       const expenses = await Expense.find({
         resident: resident._id,
+        ...req.tenantFilter,
         month: Number(month),
         year: Number(year)
       }).sort({ createdAt: 1 });
@@ -741,7 +750,7 @@ const generateAllStatementsPDFRoute = async (req, res) => {
 // PUT /api/billing/statements/:statementId/toggle-lock
 const toggleStatementLock = async (req, res) => {
   try {
-    const statement = await MonthlyStatement.findById(req.params.statementId);
+    const statement = await MonthlyStatement.findOne({ _id: req.params.statementId, ...req.tenantFilter });
     if (!statement) return res.status(404).json({ message: 'Statement not found' });
 
     statement.locked = !statement.locked;
@@ -757,7 +766,7 @@ const toggleStatementLock = async (req, res) => {
 const lockMonth = async (req, res) => {
   try {
     const { month, year, locked, sucursal } = req.body;
-    const query = { month: Number(month), year: Number(year) };
+    const query = { month: Number(month), year: Number(year), ...req.tenantFilter };
 
     let statements = await MonthlyStatement.find(query).populate('resident');
     if (sucursal) {
@@ -778,7 +787,7 @@ const generateSummaryPDFRoute = async (req, res) => {
   try {
     const { month, year } = req.params;
     const { sucursal } = req.query;
-    const query = { month: Number(month), year: Number(year) };
+    const query = { month: Number(month), year: Number(year), ...req.tenantFilter };
 
     const statements = await MonthlyStatement.find(query).populate('resident').sort({ 'resident.lastName': 1 });
     const filtered = sucursal
@@ -806,7 +815,7 @@ const generateDebtorsPDFRoute = async (req, res) => {
   try {
     const { month, year } = req.params;
     const { sucursal } = req.query;
-    const query = { month: Number(month), year: Number(year), balance: { $gt: 0 } };
+    const query = { month: Number(month), year: Number(year), balance: { $gt: 0 }, ...req.tenantFilter };
 
     const statements = await MonthlyStatement.find(query).populate('resident').sort({ balance: -1 });
     const filtered = sucursal

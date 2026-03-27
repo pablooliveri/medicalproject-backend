@@ -49,6 +49,11 @@ const settingsSchema = new mongoose.Schema({
   statementFooterText: {
     type: String,
     default: 'Recordamos que los pagos deben Realizarse del 1 al 5 de cada mes.\nQuedamos a las órdenes para cualquier consulta.'
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

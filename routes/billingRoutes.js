@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 const { uploadExpensePhoto } = require('../middleware/upload');
 const {
   getBillingConfig,
@@ -31,7 +32,7 @@ const {
   loadRecurringExpenses
 } = require('../controllers/billingController');
 
-router.use(protect);
+router.use(protect, tenant);
 
 // Billing config
 router.get('/configs', getAllConfigs);

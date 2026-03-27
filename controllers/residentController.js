@@ -23,7 +23,7 @@ const getResidents = async (req, res) => {
       ];
     }
 
-    const residents = await Resident.find(query).sort({ lastName: 1, firstName: 1 });
+    const residents = await Resident.find({ ...query, ...req.tenantFilter }).sort({ lastName: 1, firstName: 1 });
     res.json(residents);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -33,7 +33,7 @@ const getResidents = async (req, res) => {
 // GET /api/residents/:id
 const getResident = async (req, res) => {
   try {
-    const resident = await Resident.findById(req.params.id);
+    const resident = await Resident.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!resident) {
       return res.status(404).json({ message: 'Resident not found' });
     }
@@ -47,7 +47,7 @@ const getResident = async (req, res) => {
 const createResident = async (req, res) => {
   try {
     const { firstName, lastName, cedula, admissionDate, notes, sucursal } = req.body;
-    const resident = await Resident.create({ firstName, lastName, cedula, admissionDate, notes, sucursal });
+    const resident = await Resident.create({ firstName, lastName, cedula, admissionDate, notes, sucursal, institution: req.user.institution });
     res.status(201).json(resident);
   } catch (error) {
     if (error.code === 11000) {
@@ -61,10 +61,10 @@ const createResident = async (req, res) => {
 const updateResident = async (req, res) => {
   try {
     const { firstName, lastName, cedula, admissionDate, notes, isActive, sucursal } = req.body;
-    const resident = await Resident.findByIdAndUpdate(
-      req.params.id,
+    const resident = await Resident.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { firstName, lastName, cedula, admissionDate, notes, isActive, sucursal },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!resident) {
       return res.status(404).json({ message: 'Resident not found' });
@@ -78,10 +78,10 @@ const updateResident = async (req, res) => {
 // DELETE /api/residents/:id (soft delete)
 const deleteResident = async (req, res) => {
   try {
-    const resident = await Resident.findByIdAndUpdate(
-      req.params.id,
+    const resident = await Resident.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { isActive: false },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!resident) {
       return res.status(404).json({ message: 'Resident not found' });
@@ -95,7 +95,7 @@ const deleteResident = async (req, res) => {
 // GET /api/residents/:id/full
 const getResidentWithMedications = async (req, res) => {
   try {
-    const resident = await Resident.findById(req.params.id);
+    const resident = await Resident.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!resident) {
       return res.status(404).json({ message: 'Resident not found' });
     }

@@ -34,6 +34,11 @@ const medicationHistorySchema = new mongoose.Schema({
   date: {
     type: Date,
     default: Date.now
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

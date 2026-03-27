@@ -1,8 +1,12 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+const generateToken = (user) => {
+  return jwt.sign(
+    { id: user._id, role: user.role, institution: user.institution },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' }
+  );
 };
 
 // POST /api/auth/login
@@ -19,9 +23,11 @@ const login = async (req, res) => {
       user: {
         _id: user._id,
         username: user.username,
-        name: user.name
+        name: user.name,
+        role: user.role,
+        institution: user.institution
       },
-      token: generateToken(user._id)
+      token: generateToken(user)
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -44,9 +50,11 @@ const register = async (req, res) => {
       user: {
         _id: user._id,
         username: user.username,
-        name: user.name
+        name: user.name,
+        role: user.role,
+        institution: user.institution
       },
-      token: generateToken(user._id)
+      token: generateToken(user)
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -77,7 +85,8 @@ const seedAdmin = async (req, res) => {
     const admin = await User.create({
       username: 'admin',
       password: 'admin123',
-      name: 'Administrator'
+      name: 'Administrator',
+      role: 'superadmin'
     });
 
     res.status(201).json({

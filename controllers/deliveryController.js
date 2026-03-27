@@ -11,7 +11,7 @@ const getDeliveries = async (req, res) => {
     const query = {};
     if (residentId) query.resident = residentId;
 
-    const deliveries = await Delivery.find(query)
+    const deliveries = await Delivery.find({ ...query, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication')
       .sort({ deliveryDate: -1 });
@@ -25,7 +25,7 @@ const getDeliveries = async (req, res) => {
 // GET /api/deliveries/:id
 const getDelivery = async (req, res) => {
   try {
-    const delivery = await Delivery.findById(req.params.id)
+    const delivery = await Delivery.findOne({ _id: req.params.id, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication')
       .populate('items.residentMedication');
@@ -67,7 +67,8 @@ const createDelivery = async (req, res) => {
       deliveryDate: deliveryDate || new Date(),
       items,
       photos,
-      notes
+      notes,
+      institution: req.user.institution
     });
 
     // Update stock for each item
@@ -85,7 +86,8 @@ const createDelivery = async (req, res) => {
           quantity: Number(item.quantity),
           previousStock,
           newStock,
-          notes: `Delivery by ${deliveredBy}`
+          notes: `Delivery by ${deliveredBy}`,
+          institution: req.user.institution
         });
 
         resMed.currentStock = newStock;
@@ -95,7 +97,7 @@ const createDelivery = async (req, res) => {
 
     await checkLowStock();
 
-    const populated = await Delivery.findById(delivery._id)
+    const populated = await Delivery.findOne({ _id: delivery._id, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication');
 
@@ -112,8 +114,8 @@ const getDeliveryHistory = async (req, res) => {
     const query = {};
     if (residentId) query.resident = residentId;
 
-    const total = await Delivery.countDocuments(query);
-    const deliveries = await Delivery.find(query)
+    const total = await Delivery.countDocuments({ ...query, ...req.tenantFilter });
+    const deliveries = await Delivery.find({ ...query, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication')
       .sort({ deliveryDate: -1 })
@@ -134,7 +136,7 @@ const getDeliveryHistory = async (req, res) => {
 // PUT /api/deliveries/:id
 const updateDelivery = async (req, res) => {
   try {
-    const delivery = await Delivery.findById(req.params.id);
+    const delivery = await Delivery.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!delivery) {
       return res.status(404).json({ message: 'Delivery not found' });
     }
@@ -162,7 +164,8 @@ const updateDelivery = async (req, res) => {
           quantity: -Number(oldItem.quantity),
           previousStock,
           newStock,
-          notes: `Delivery edit reversal`
+          notes: `Delivery edit reversal`,
+          institution: req.user.institution
         });
       }
     }
@@ -184,7 +187,8 @@ const updateDelivery = async (req, res) => {
           quantity: Number(item.quantity),
           previousStock,
           newStock,
-          notes: `Delivery updated by ${deliveredBy}`
+          notes: `Delivery updated by ${deliveredBy}`,
+          institution: req.user.institution
         });
       }
     }
@@ -223,7 +227,7 @@ const updateDelivery = async (req, res) => {
 
     await checkLowStock();
 
-    const populated = await Delivery.findById(delivery._id)
+    const populated = await Delivery.findOne({ _id: delivery._id, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication')
       .populate('items.residentMedication');
@@ -237,7 +241,7 @@ const updateDelivery = async (req, res) => {
 // DELETE /api/deliveries/:id
 const deleteDelivery = async (req, res) => {
   try {
-    const delivery = await Delivery.findById(req.params.id);
+    const delivery = await Delivery.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!delivery) {
       return res.status(404).json({ message: 'Delivery not found' });
     }
@@ -259,7 +263,8 @@ const deleteDelivery = async (req, res) => {
           quantity: -Number(item.quantity),
           previousStock,
           newStock: Math.max(0, newStock),
-          notes: `Delivery deleted`
+          notes: `Delivery deleted`,
+          institution: req.user.institution
         });
       }
     }
@@ -269,7 +274,7 @@ const deleteDelivery = async (req, res) => {
       await deleteImage(getKeyFromUrl(photo));
     }
 
-    await Delivery.findByIdAndDelete(req.params.id);
+    await Delivery.findOneAndDelete({ _id: req.params.id, ...req.tenantFilter });
     await checkLowStock();
 
     res.json({ message: 'Delivery deleted successfully' });

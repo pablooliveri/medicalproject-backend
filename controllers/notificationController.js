@@ -5,7 +5,7 @@ const { checkLowStock } = require('../utils/notificationChecker');
 const getNotifications = async (req, res) => {
   try {
     const { limit = 50 } = req.query;
-    const notifications = await Notification.find()
+    const notifications = await Notification.find({ ...req.tenantFilter })
       .populate('resident')
       .populate('medication')
       .sort({ createdAt: -1 })
@@ -20,7 +20,7 @@ const getNotifications = async (req, res) => {
 // GET /api/notifications/unread-count
 const getUnreadCount = async (req, res) => {
   try {
-    const count = await Notification.countDocuments({ isRead: false });
+    const count = await Notification.countDocuments({ isRead: false, ...req.tenantFilter });
     res.json({ count });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -30,7 +30,7 @@ const getUnreadCount = async (req, res) => {
 // PUT /api/notifications/mark-all-read
 const markAllAsRead = async (req, res) => {
   try {
-    await Notification.updateMany({ isRead: false }, { isRead: true });
+    await Notification.updateMany({ isRead: false, ...req.tenantFilter }, { isRead: true });
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -40,10 +40,10 @@ const markAllAsRead = async (req, res) => {
 // PUT /api/notifications/:id/read
 const markAsRead = async (req, res) => {
   try {
-    const notification = await Notification.findByIdAndUpdate(
-      req.params.id,
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { isRead: true },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
@@ -57,7 +57,7 @@ const markAsRead = async (req, res) => {
 // DELETE /api/notifications/:id
 const deleteNotification = async (req, res) => {
   try {
-    const notification = await Notification.findByIdAndDelete(req.params.id);
+    const notification = await Notification.findOneAndDelete({ _id: req.params.id, ...req.tenantFilter });
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
     }

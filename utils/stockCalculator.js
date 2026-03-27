@@ -18,9 +18,11 @@ const calculateCoverageDate = (currentStock, schedule) => {
 };
 
 // Daily stock deduction - runs via cron job at midnight
-const dailyStockDeduction = async () => {
+const dailyStockDeduction = async (institutionId = null) => {
   try {
-    const activeMeds = await ResidentMedication.find({ isActive: true })
+    const filter = { isActive: true };
+    if (institutionId) filter.institution = institutionId;
+    const activeMeds = await ResidentMedication.find(filter)
       .populate('resident')
       .populate('medication');
 
@@ -46,7 +48,8 @@ const dailyStockDeduction = async () => {
         previousStock,
         newStock,
         notes: 'Automatic daily deduction',
-        date: new Date()
+        date: new Date(),
+        institution: med.institution
       });
 
       // Update current stock

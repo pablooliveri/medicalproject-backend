@@ -12,7 +12,7 @@ const getResidentMedications = async (req, res) => {
     if (residentId) query.resident = residentId;
     if (isActive !== undefined) query.isActive = isActive === 'true';
 
-    const medications = await ResidentMedication.find(query)
+    const medications = await ResidentMedication.find({ ...query, ...req.tenantFilter })
       .populate('medication')
       .populate('resident')
       .sort({ isActive: -1, createdAt: -1 });
@@ -26,7 +26,7 @@ const getResidentMedications = async (req, res) => {
 // GET /api/resident-medications/:id
 const getResidentMedication = async (req, res) => {
   try {
-    const med = await ResidentMedication.findById(req.params.id)
+    const med = await ResidentMedication.findOne({ _id: req.params.id, ...req.tenantFilter })
       .populate('medication')
       .populate('resident');
     if (!med) {
@@ -49,7 +49,8 @@ const assignMedication = async (req, res) => {
       dosageMg,
       schedule,
       currentStock: currentStock || 0,
-      notes
+      notes,
+      institution: req.user.institution
     });
 
     // Create initial stock movement
@@ -62,11 +63,12 @@ const assignMedication = async (req, res) => {
         quantity: currentStock,
         previousStock: 0,
         newStock: currentStock,
-        notes: 'Initial stock on medication assignment'
+        notes: 'Initial stock on medication assignment',
+        institution: req.user.institution
       });
     }
 
-    const populated = await ResidentMedication.findById(med._id)
+    const populated = await ResidentMedication.findOne({ _id: med._id, ...req.tenantFilter })
       .populate('medication')
       .populate('resident');
 
@@ -82,7 +84,8 @@ const assignMedication = async (req, res) => {
         schedule: med.schedule,
         notes: med.notes
       },
-      date: new Date()
+      date: new Date(),
+      institution: req.user.institution
     });
 
     res.status(201).json(populated);
@@ -95,7 +98,7 @@ const assignMedication = async (req, res) => {
 const updateMedication = async (req, res) => {
   try {
     const { dosageMg, schedule, notes } = req.body;
-    const med = await ResidentMedication.findById(req.params.id);
+    const med = await ResidentMedication.findOne({ _id: req.params.id, ...req.tenantFilter });
 
     if (!med) {
       return res.status(404).json({ message: 'Medication assignment not found' });
@@ -124,7 +127,8 @@ const updateMedication = async (req, res) => {
           quantity: 0,
           previousStock: med.currentStock,
           newStock: med.currentStock,
-          notes: `Schedule changed: daily consumption ${oldDaily} -> ${newDaily}`
+          notes: `Schedule changed: daily consumption ${oldDaily} -> ${newDaily}`,
+          institution: req.user.institution
         });
       }
     }
@@ -144,10 +148,11 @@ const updateMedication = async (req, res) => {
         schedule: med.schedule,
         notes: med.notes
       },
-      date: new Date()
+      date: new Date(),
+      institution: req.user.institution
     });
 
-    const populated = await ResidentMedication.findById(med._id)
+    const populated = await ResidentMedication.findOne({ _id: med._id, ...req.tenantFilter })
       .populate('medication')
       .populate('resident');
 
@@ -163,10 +168,10 @@ const deactivateMedication = async (req, res) => {
     const { endDate } = req.body || {};
     const deactivationDate = endDate ? new Date(endDate) : new Date();
 
-    const med = await ResidentMedication.findByIdAndUpdate(
-      req.params.id,
+    const med = await ResidentMedication.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { isActive: false, endDate: deactivationDate },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('medication').populate('resident');
 
     if (!med) {
@@ -185,7 +190,8 @@ const deactivateMedication = async (req, res) => {
         schedule: med.schedule,
         notes: med.notes
       },
-      date: deactivationDate
+      date: deactivationDate,
+      institution: req.user.institution
     });
 
     res.json(med);
@@ -197,10 +203,10 @@ const deactivateMedication = async (req, res) => {
 // PUT /api/resident-medications/:id/reactivate
 const reactivateMedication = async (req, res) => {
   try {
-    const med = await ResidentMedication.findByIdAndUpdate(
-      req.params.id,
+    const med = await ResidentMedication.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { isActive: true, endDate: null },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('medication').populate('resident');
 
     if (!med) {
@@ -219,7 +225,8 @@ const reactivateMedication = async (req, res) => {
         schedule: med.schedule,
         notes: med.notes
       },
-      date: new Date()
+      date: new Date(),
+      institution: req.user.institution
     });
 
     res.json(med);

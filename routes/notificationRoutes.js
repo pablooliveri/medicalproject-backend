@@ -9,8 +9,9 @@ const {
   checkStock
 } = require('../controllers/notificationController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.get('/', getNotifications);
 router.get('/unread-count', getUnreadCount);

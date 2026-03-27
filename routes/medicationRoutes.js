@@ -8,8 +8,9 @@ const {
   deleteMedication
 } = require('../controllers/medicationController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.route('/').get(getMedications).post(createMedication);
 router.route('/:id').get(getMedication).put(updateMedication).delete(deleteMedication);

@@ -8,7 +8,8 @@ const getStockStatus = async (req, res) => {
   try {
     const medications = await ResidentMedication.find({
       resident: req.params.residentId,
-      isActive: true
+      isActive: true,
+      ...req.tenantFilter
     }).populate('medication');
 
     const status = medications.map(med => {
@@ -47,7 +48,7 @@ const adjustStock = async (req, res) => {
   try {
     const { residentMedicationId, newStock, reason } = req.body;
 
-    const med = await ResidentMedication.findById(residentMedicationId);
+    const med = await ResidentMedication.findOne({ _id: residentMedicationId, ...req.tenantFilter });
     if (!med) {
       return res.status(404).json({ message: 'Medication assignment not found' });
     }
@@ -62,7 +63,8 @@ const adjustStock = async (req, res) => {
       quantity: newStock - previousStock,
       previousStock,
       newStock,
-      notes: reason || 'Manual adjustment'
+      notes: reason || 'Manual adjustment',
+      institution: req.user.institution
     });
 
     med.currentStock = newStock;
@@ -97,8 +99,8 @@ const getStockMovements = async (req, res) => {
     if (residentMedicationId) query.residentMedication = residentMedicationId;
     if (type) query.type = type;
 
-    const total = await StockMovement.countDocuments(query);
-    const movements = await StockMovement.find(query)
+    const total = await StockMovement.countDocuments({ ...query, ...req.tenantFilter });
+    const movements = await StockMovement.find({ ...query, ...req.tenantFilter })
       .populate('medication')
       .populate('resident')
       .sort({ date: -1 })

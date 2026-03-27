@@ -29,6 +29,11 @@ const medicationSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

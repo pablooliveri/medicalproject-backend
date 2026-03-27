@@ -3,17 +3,19 @@ const Notification = require('../models/Notification');
 const Settings = require('../models/Settings');
 const BillingConfig = require('../models/BillingConfig');
 
-const checkLowStock = async () => {
+const checkLowStock = async (institutionId = null) => {
   try {
-    let settings = await Settings.findOne();
+    const instFilter = institutionId ? { institution: institutionId } : {};
+    let settings = await Settings.findOne(instFilter);
     if (!settings) {
-      settings = await Settings.create({});
+      settings = await Settings.create(instFilter);
     }
 
     const threshold = settings.lowStockThresholdDays;
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const activeMeds = await ResidentMedication.find({ isActive: true })
+    const medFilter = { isActive: true, ...instFilter };
+    const activeMeds = await ResidentMedication.find(medFilter)
       .populate('resident')
       .populate('medication');
 
@@ -44,7 +46,8 @@ const checkLowStock = async () => {
             message: `${med.resident.firstName} ${med.resident.lastName} has run out of ${med.medication.genericName} (${med.dosageMg}${med.medication.dosageUnit}).`,
             resident: med.resident._id,
             medication: med.medication._id,
-            data: { residentMedicationId: med._id, daysRemaining: 0 }
+            data: { residentMedicationId: med._id, daysRemaining: 0 },
+            institution: med.institution
           });
         }
       } else if (daysRemaining <= threshold) {
@@ -62,7 +65,8 @@ const checkLowStock = async () => {
             message: `${med.resident.firstName} ${med.resident.lastName} has only ${daysRemaining} day(s) of ${med.medication.genericName} (${med.dosageMg}${med.medication.dosageUnit}) remaining. Current stock: ${med.currentStock}.`,
             resident: med.resident._id,
             medication: med.medication._id,
-            data: { residentMedicationId: med._id, daysRemaining }
+            data: { residentMedicationId: med._id, daysRemaining },
+            institution: med.institution
           });
         }
       }
@@ -72,12 +76,13 @@ const checkLowStock = async () => {
   }
 };
 
-const checkBillingAdjustments = async () => {
+const checkBillingAdjustments = async (institutionId = null) => {
   try {
     const currentMonth = new Date().getMonth() + 1;
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const instFilter = institutionId ? { institution: institutionId } : {};
 
-    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth })
+    const configs = await BillingConfig.find({ adjustmentMonths: currentMonth, ...instFilter })
       .populate('resident');
 
     for (const config of configs) {
@@ -99,7 +104,8 @@ const checkBillingAdjustments = async () => {
             adjustmentPercentage: config.adjustmentPercentage,
             currentMonthlyFee: config.monthlyFee,
             month: currentMonth
-          }
+          },
+          institution: config.institution
         });
       }
     }

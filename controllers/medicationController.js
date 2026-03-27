@@ -17,7 +17,7 @@ const getMedications = async (req, res) => {
       ];
     }
 
-    const medications = await Medication.find(query).sort({ genericName: 1 });
+    const medications = await Medication.find({ ...query, ...req.tenantFilter }).sort({ genericName: 1 });
     res.json(medications);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -27,7 +27,7 @@ const getMedications = async (req, res) => {
 // GET /api/medications/:id
 const getMedication = async (req, res) => {
   try {
-    const medication = await Medication.findById(req.params.id);
+    const medication = await Medication.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!medication) {
       return res.status(404).json({ message: 'Medication not found' });
     }
@@ -40,7 +40,7 @@ const getMedication = async (req, res) => {
 // POST /api/medications
 const createMedication = async (req, res) => {
   try {
-    const medication = await Medication.create(req.body);
+    const medication = await Medication.create({ ...req.body, institution: req.user.institution });
     res.status(201).json(medication);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -50,10 +50,10 @@ const createMedication = async (req, res) => {
 // PUT /api/medications/:id
 const updateMedication = async (req, res) => {
   try {
-    const medication = await Medication.findByIdAndUpdate(
-      req.params.id,
+    const medication = await Medication.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       req.body,
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!medication) {
       return res.status(404).json({ message: 'Medication not found' });
@@ -67,10 +67,10 @@ const updateMedication = async (req, res) => {
 // DELETE /api/medications/:id (soft delete)
 const deleteMedication = async (req, res) => {
   try {
-    const medication = await Medication.findByIdAndUpdate(
-      req.params.id,
+    const medication = await Medication.findOneAndUpdate(
+      { _id: req.params.id, ...req.tenantFilter },
       { isActive: false },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!medication) {
       return res.status(404).json({ message: 'Medication not found' });

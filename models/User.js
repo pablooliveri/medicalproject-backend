@@ -15,6 +15,16 @@ const userSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true
+  },
+  role: {
+    type: String,
+    enum: ['superadmin', 'institution_admin', 'staff'],
+    default: 'staff'
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

@@ -7,8 +7,9 @@ const {
   getStockMovements
 } = require('../controllers/stockController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.get('/status/:residentId', getStockStatus);
 router.put('/adjust', adjustStock);

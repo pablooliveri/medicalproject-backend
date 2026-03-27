@@ -1,12 +1,13 @@
 const Settings = require('../models/Settings');
+const Institution = require('../models/Institution');
 const { uploadImage, deleteImage, getKeyFromUrl } = require('../utils/storage');
 
 // GET /api/settings
 const getSettings = async (req, res) => {
   try {
-    let settings = await Settings.findOne();
+    let settings = await Settings.findOne(req.tenantFilter);
     if (!settings) {
-      settings = await Settings.create({});
+      settings = await Settings.create({ institution: req.user.institution });
     }
     res.json(settings);
   } catch (error) {
@@ -18,9 +19,9 @@ const getSettings = async (req, res) => {
 const updateSettings = async (req, res) => {
   try {
     const { companyName, lowStockThresholdDays, language, address, phone, email } = req.body;
-    let settings = await Settings.findOne();
+    let settings = await Settings.findOne(req.tenantFilter);
     if (!settings) {
-      settings = await Settings.create({});
+      settings = await Settings.create({ institution: req.user.institution });
     }
 
     if (companyName !== undefined) settings.companyName = companyName;
@@ -32,6 +33,19 @@ const updateSettings = async (req, res) => {
     if (req.body.branches !== undefined) settings.branches = req.body.branches;
 
     await settings.save();
+
+    // Sync company info to Institution model so superadmin sees updated data
+    if (req.user.institution) {
+      const instUpdate = {};
+      if (companyName !== undefined) instUpdate.name = companyName;
+      if (address !== undefined) instUpdate.address = address;
+      if (phone !== undefined) instUpdate.contactPhone = phone;
+      if (email !== undefined) instUpdate.contactEmail = email;
+      if (Object.keys(instUpdate).length > 0) {
+        await Institution.findByIdAndUpdate(req.user.institution, instUpdate);
+      }
+    }
+
     res.json(settings);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -43,17 +57,18 @@ const uploadLogo = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
 
-    let settings = await Settings.findOne();
-    if (!settings) settings = await Settings.create({});
+    let settings = await Settings.findOne(req.tenantFilter);
+    if (!settings) settings = await Settings.create({ institution: req.user.institution });
 
     // Delete old logo from R2
     if (settings.logo) {
       await deleteImage(getKeyFromUrl(settings.logo));
     }
 
-    // Upload to R2 (fixed public_id so it overwrites)
+    // Upload to R2 with institution-specific key
+    const institutionId = req.user.institution || 'default';
     const result = await uploadImage(req.file.buffer, 'medical/logo', {
-      public_id: 'company-logo',
+      public_id: `logo-${institutionId}`,
       contentType: req.file.mimetype
     });
 
@@ -69,7 +84,7 @@ const uploadLogo = async (req, res) => {
 // DELETE /api/settings/logo
 const removeLogo = async (req, res) => {
   try {
-    let settings = await Settings.findOne();
+    let settings = await Settings.findOne(req.tenantFilter);
     if (!settings || !settings.logo) return res.status(404).json({ message: 'No logo found' });
 
     await deleteImage(getKeyFromUrl(settings.logo));
@@ -90,8 +105,8 @@ const addBranch = async (req, res) => {
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Branch name is required' });
     }
-    let settings = await Settings.findOne();
-    if (!settings) settings = await Settings.create({});
+    let settings = await Settings.findOne(req.tenantFilter);
+    if (!settings) settings = await Settings.create({ institution: req.user.institution });
 
     if (settings.branches.includes(name.trim())) {
       return res.status(400).json({ message: 'Branch already exists' });
@@ -111,7 +126,7 @@ const updateBranch = async (req, res) => {
     if (!oldName || !newName || !newName.trim()) {
       return res.status(400).json({ message: 'Old name and new name are required' });
     }
-    let settings = await Settings.findOne();
+    let settings = await Settings.findOne(req.tenantFilter);
     if (!settings) return res.status(404).json({ message: 'Settings not found' });
 
     const idx = settings.branches.indexOf(oldName);
@@ -126,7 +141,7 @@ const updateBranch = async (req, res) => {
 
     // Update all residents with the old branch name
     const Resident = require('../models/Resident');
-    await Resident.updateMany({ sucursal: oldName }, { sucursal: newName.trim() });
+    await Resident.updateMany({ sucursal: oldName, ...req.tenantFilter }, { sucursal: newName.trim() });
 
     res.json(settings);
   } catch (error) {
@@ -138,7 +153,7 @@ const updateBranch = async (req, res) => {
 const deleteBranch = async (req, res) => {
   try {
     const { name } = req.params;
-    let settings = await Settings.findOne();
+    let settings = await Settings.findOne(req.tenantFilter);
     if (!settings) return res.status(404).json({ message: 'Settings not found' });
 
     const idx = settings.branches.indexOf(name);
@@ -148,7 +163,7 @@ const deleteBranch = async (req, res) => {
 
     // Check if any residents are assigned to this branch
     const Resident = require('../models/Resident');
-    const count = await Resident.countDocuments({ sucursal: name });
+    const count = await Resident.countDocuments({ sucursal: name, ...req.tenantFilter });
     if (count > 0) {
       return res.status(400).json({ message: `Cannot delete: ${count} resident(s) assigned to this branch` });
     }

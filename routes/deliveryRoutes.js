@@ -9,9 +9,10 @@ const {
   deleteDelivery
 } = require('../controllers/deliveryController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 const { uploadDeliveryPhotos } = require('../middleware/upload');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.get('/history', getDeliveryHistory);
 router.route('/').get(getDeliveries).post(uploadDeliveryPhotos, createDelivery);

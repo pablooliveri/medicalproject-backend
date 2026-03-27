@@ -40,6 +40,11 @@ const residentMedicationSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: ''
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

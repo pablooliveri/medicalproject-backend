@@ -7,7 +7,7 @@ const { calculateCoverageDate } = require('../utils/stockCalculator');
 // GET /api/reports/delivery/:id
 const generateDeliveryReport = async (req, res) => {
   try {
-    const delivery = await Delivery.findById(req.params.id)
+    const delivery = await Delivery.findOne({ _id: req.params.id, ...req.tenantFilter })
       .populate('resident')
       .populate('items.medication')
       .populate('items.residentMedication');
@@ -49,7 +49,7 @@ const generateDeliveryReport = async (req, res) => {
 // GET /api/reports/resident/:id?month=3&year=2026
 const generateResidentReport = async (req, res) => {
   try {
-    const resident = await Resident.findById(req.params.id);
+    const resident = await Resident.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!resident) {
       return res.status(404).json({ message: 'Resident not found' });
     }
@@ -66,6 +66,7 @@ const generateResidentReport = async (req, res) => {
     // - AND either still active OR deactivated during/after the month
     const resMeds = await ResidentMedication.find({
       resident: req.params.id,
+      ...req.tenantFilter,
       startDate: { $lte: endOfMonth },
       $or: [
         { isActive: true },
@@ -122,7 +123,7 @@ const generateAllResidentsReport = async (req, res) => {
     const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
 
     // Find residents, optionally filtered by branch
-    const residentFilter = { isActive: true };
+    const residentFilter = { isActive: true, ...req.tenantFilter };
     if (sucursal) residentFilter.sucursal = sucursal;
     const residents = await Resident.find(residentFilter).sort({ lastName: 1, firstName: 1 });
 
@@ -135,6 +136,7 @@ const generateAllResidentsReport = async (req, res) => {
     for (const resident of residents) {
       const resMeds = await ResidentMedication.find({
         resident: resident._id,
+        ...req.tenantFilter,
         startDate: { $lte: endOfMonth },
         $or: [
           { isActive: true },

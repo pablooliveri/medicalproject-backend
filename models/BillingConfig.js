@@ -30,6 +30,11 @@ const billingConfigSchema = new mongoose.Schema({
       quantity: { type: Number, default: 1 }
     }],
     default: []
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true

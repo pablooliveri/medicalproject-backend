@@ -10,9 +10,10 @@ const {
   deleteBranch
 } = require('../controllers/settingsController');
 const { protect } = require('../middleware/auth');
+const { tenant } = require('../middleware/tenant');
 const { uploadLogo: uploadLogoMiddleware } = require('../middleware/upload');
 
-router.use(protect);
+router.use(protect, tenant);
 
 router.route('/').get(getSettings).put(updateSettings);
 router.post('/logo', (req, res, next) => {

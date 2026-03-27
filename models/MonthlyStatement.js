@@ -56,6 +56,11 @@ const monthlyStatementSchema = new mongoose.Schema({
   locked: {
     type: Boolean,
     default: false
+  },
+  institution: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Institution',
+    default: null
   }
 }, {
   timestamps: true
