@@ -19,7 +19,8 @@ app.use(cors({
     'http://localhost:3000',
     'https://medicalmanegement.netlify.app',
     'https://project-jhz2u-git-main-medical3.vercel.app',
-    'https://project-jhz2u-medical3.vercel.app'
+    'https://project-jhz2u-medical3.vercel.app',
+    'https://medicalproject-frontend.vercel.app'
   ],
   credentials: true
 }));
