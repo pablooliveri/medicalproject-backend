@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Institution = require('../models/Institution');
 
 const generateToken = (user) => {
   return jwt.sign(
@@ -17,6 +18,22 @@ const login = async (req, res) => {
     const user = await User.findOne({ username });
     if (!user || !(await user.matchPassword(password))) {
       return res.status(401).json({ message: 'Invalid username or password' });
+    }
+
+    // Check institution blocking status (skip for superadmin)
+    if (user.role !== 'superadmin' && user.institution) {
+      const institution = await Institution.findById(user.institution);
+      if (institution) {
+        if (!institution.isActive) {
+          return res.status(403).json({ message: 'Your institution has been disabled. Contact the administrator.', code: 'INSTITUTION_BLOCKED' });
+        }
+        if (institution.subscriptionStatus === 'blocked') {
+          return res.status(403).json({ message: 'Your institution has been blocked. Contact the administrator.', code: 'INSTITUTION_BLOCKED' });
+        }
+        if (institution.subscriptionStatus === 'expired') {
+          return res.status(403).json({ message: 'Your subscription has expired. Contact the administrator.', code: 'SUBSCRIPTION_EXPIRED' });
+        }
+      }
     }
 
     res.json({
