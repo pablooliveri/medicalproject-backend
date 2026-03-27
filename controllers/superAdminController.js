@@ -17,6 +17,16 @@ const bcrypt = require('bcryptjs');
 // GET /api/superadmin/dashboard
 const getDashboard = async (req, res) => {
   try {
+    // Auto-expire institutions whose end date has passed
+    await Institution.updateMany(
+      {
+        subscriptionStatus: 'active',
+        subscriptionEndDate: { $ne: null, $lt: new Date() }
+      },
+      { $set: { subscriptionStatus: 'expired', isActive: false } }
+    );
+
+    const now = new Date();
     const [total, active, blocked, expired] = await Promise.all([
       Institution.countDocuments(),
       Institution.countDocuments({ isActive: true, subscriptionStatus: 'active' }),
@@ -30,7 +40,7 @@ const getDashboard = async (req, res) => {
 
     const expiringInstitutions = await Institution.find({
       subscriptionStatus: 'active',
-      subscriptionEndDate: { $ne: null, $lte: new Date(Date.now() + 30 * 86400000) }
+      subscriptionEndDate: { $ne: null, $gt: now, $lte: new Date(Date.now() + 30 * 86400000) }
     }).sort({ subscriptionEndDate: 1 }).limit(5);
 
     res.json({
