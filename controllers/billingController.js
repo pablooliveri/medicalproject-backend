@@ -12,7 +12,7 @@ const { uploadImage, deleteImage, getKeyFromUrl } = require('../utils/storage');
  * Recalculates totals and balance for a MonthlyStatement.
  * Creates the statement if it doesn't exist yet.
  */
-const recalculateStatement = async (residentId, month, year) => {
+const recalculateStatement = async (residentId, month, year, institution) => {
   // Sum all expenses for this resident/month/year
   const expenses = await Expense.find({ resident: residentId, month, year });
   const totalExpenses = expenses.reduce((sum, e) => sum + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
@@ -21,17 +21,23 @@ const recalculateStatement = async (residentId, month, year) => {
   const config = await BillingConfig.findOne({ resident: residentId });
   const currentMonthlyFee = config ? config.monthlyFee : 0;
 
-  // Get or create statement
+  // Find by resident/month/year (no institution filter) so we adopt orphans
+  // created by older code paths that didn't set institution.
   let statement = await MonthlyStatement.findOne({ resident: residentId, month, year });
 
   if (!statement) {
     statement = new MonthlyStatement({
       resident: residentId,
+      institution: institution || null,
       month,
       year,
       monthlyFee: currentMonthlyFee
     });
   } else {
+    // Adopt orphan (institution=null) into the caller's tenant
+    if (!statement.institution && institution) {
+      statement.institution = institution;
+    }
     // Update monthlyFee from config in case it changed
     statement.monthlyFee = currentMonthlyFee;
   }
@@ -162,7 +168,7 @@ const createExpense = async (req, res) => {
       notes
     });
 
-    await recalculateStatement(req.params.residentId, Number(month), Number(year));
+    await recalculateStatement(req.params.residentId, Number(month), Number(year), req.user.institution);
 
     res.status(201).json(expense);
   } catch (error) {
@@ -192,7 +198,7 @@ const updateExpense = async (req, res) => {
     }
 
     await expense.save();
-    await recalculateStatement(expense.resident, expense.month, expense.year);
+    await recalculateStatement(expense.resident, expense.month, expense.year, req.user.institution);
 
     res.json(expense);
   } catch (error) {
@@ -217,7 +223,7 @@ const deleteExpense = async (req, res) => {
     }
 
     await Expense.findByIdAndDelete(req.params.expenseId);
-    await recalculateStatement(resident, month, year);
+    await recalculateStatement(resident, month, year, req.user.institution);
 
     res.json({ message: 'Expense deleted' });
   } catch (error) {
@@ -342,7 +348,7 @@ const updateStatement = async (req, res) => {
     }
 
     await statement.save();
-    const updated = await recalculateStatement(statement.resident, statement.month, statement.year);
+    const updated = await recalculateStatement(statement.resident, statement.month, statement.year, req.user.institution);
     res.json(updated);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -398,7 +404,7 @@ const loadRecurringExpenses = async (req, res) => {
       }
     }
 
-    await recalculateStatement(residentId, Number(month), Number(year));
+    await recalculateStatement(residentId, Number(month), Number(year), req.user.institution);
     res.json({ created });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -434,7 +440,7 @@ const createPayment = async (req, res) => {
       notes
     });
 
-    await recalculateStatement(statement.resident, statement.month, statement.year);
+    await recalculateStatement(statement.resident, statement.month, statement.year, req.user.institution);
 
     res.status(201).json(payment);
   } catch (error) {
@@ -452,7 +458,7 @@ const deletePayment = async (req, res) => {
     await Payment.findByIdAndDelete(req.params.paymentId);
 
     if (statement) {
-      await recalculateStatement(statement.resident, statement.month, statement.year);
+      await recalculateStatement(statement.resident, statement.month, statement.year, req.user.institution);
     }
 
     res.json({ message: 'Payment deleted' });
@@ -697,39 +703,68 @@ const generateAllStatementsPDFRoute = async (req, res) => {
 
     const residentsData = [];
     for (const resident of residents) {
-      const statement = await MonthlyStatement.findOne({
+      // BillingConfig.resident is globally unique — no institution filter
+      const config = await BillingConfig.findOne({ resident: resident._id });
+      const monthlyFee = config ? config.monthlyFee : 0;
+
+      const expenses = await Expense.find({
         resident: resident._id,
-        ...req.tenantFilter,
+        month: Number(month),
+        year: Number(year)
+      }).sort({ createdAt: 1 });
+      const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
+
+      // Find by resident/month/year so we adopt orphans (institution=null) instead of
+      // hitting the unique index when trying to create a new one.
+      let statement = await MonthlyStatement.findOne({
+        resident: resident._id,
         month: Number(month),
         year: Number(year)
       });
 
-      const config = await BillingConfig.findOne({ resident: resident._id, ...req.tenantFilter });
-      let stmtData = statement;
+      // Skip cross-tenant statements (shouldn't happen since residents are tenant-scoped)
+      if (statement && statement.institution && String(statement.institution) !== String(req.user.institution)) {
+        continue;
+      }
 
-      if (!stmtData) {
-        const expenses = await Expense.find({ resident: resident._id, ...req.tenantFilter, month: Number(month), year: Number(year) });
-        const totalExpenses = expenses.reduce((s, e) => s + ((e.unitPrice || 0) * (e.quantity || 1)), 0);
-        const monthlyFee = config ? config.monthlyFee : 0;
-        stmtData = {
+      const payments = statement
+        ? await Payment.find({ statement: statement._id })
+        : [];
+      const amountPaid = payments.reduce((s, p) => s + (p.amount || 0), 0);
+
+      const totalAmount = monthlyFee + totalExpenses;
+      const balance = totalAmount - amountPaid;
+      const status = balance <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'pending';
+
+      if (!statement) {
+        statement = await MonthlyStatement.create({
+          resident: resident._id,
+          institution: req.user.institution,
           month: Number(month),
           year: Number(year),
           monthlyFee,
           totalExpenses,
-          totalAmount: monthlyFee + totalExpenses,
-          amountPaid: 0,
-          balance: monthlyFee + totalExpenses
-        };
+          totalAmount,
+          amountPaid,
+          balance,
+          status
+        });
+      } else if (!statement.locked) {
+        if (!statement.institution) statement.institution = req.user.institution;
+        statement.monthlyFee = monthlyFee;
+        statement.totalExpenses = totalExpenses;
+        statement.totalAmount = totalAmount;
+        statement.amountPaid = amountPaid;
+        statement.balance = balance;
+        statement.status = status;
+        await statement.save();
+      } else if (!statement.institution) {
+        // Locked but orphan — adopt without touching financials
+        statement.institution = req.user.institution;
+        await statement.save();
       }
 
-      const expenses = await Expense.find({
-        resident: resident._id,
-        ...req.tenantFilter,
-        month: Number(month),
-        year: Number(year)
-      }).sort({ createdAt: 1 });
-
-      residentsData.push({ resident, statement: stmtData, expenses });
+      residentsData.push({ resident, statement, expenses });
     }
 
     const pdfBuffer = await generateAllStatementsPDF(residentsData, { month: Number(month), year: Number(year) });
